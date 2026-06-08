@@ -1,0 +1,14 @@
+# Caddy config for the dashterm web container.
+# Static SPA — fall back to index.html for client-side routes (/cli etc.).
+
+:80 {
+  root * /srv
+  encode zstd gzip
+  try_files {path} /index.html
+  file_server
+
+  # Long cache for hashed assets; no cache for index.html.
+  @hashedAssets path *.js *.css *.woff *.woff2 *.png *.jpg *.svg *.ico
+  header @hashedAssets Cache-Control "public, max-age=31536000, immutable"
+  header /index.html Cache-Control "no-cache, no-store, must-revalidate"
+}

@@ -1,0 +1,17 @@
+#!/usr/bin/env bash
+# Local-dev shim: `./dashterm homehub up` from the repo root without
+# typing `node cli/dist/index.js …` or fiddling with PATH.
+#
+# After `scripts/install.sh` runs, `dashterm` is also linked globally
+# (via `npm link` or ~/.local/bin), so you can drop the `./`.
+
+DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+CLI_DIST="$DIR/cli/dist/index.js"
+
+if [ ! -f "$CLI_DIST" ]; then
+  echo "[dashterm] cli/dist/ is missing — run \`npm install\` from the repo" >&2
+  echo "[dashterm] root, or \`cd cli && npm install && npm run build\` directly." >&2
+  exit 1
+fi
+
+exec node "$CLI_DIST" "$@"

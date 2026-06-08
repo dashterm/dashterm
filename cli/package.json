@@ -1,0 +1,25 @@
+{
+  "name": "@dashterm/cli",
+  "version": "0.2.0",
+  "description": "DashTerm CLI — boot the local gateway, manage users + AI providers, drive the autostart daemon.",
+  "private": true,
+  "bin": {
+    "dashterm": "./dist/index.js"
+  },
+  "main": "dist/index.js",
+  "scripts": {
+    "build": "tsc && chmod +x dist/index.js",
+    "build:watch": "tsc --watch",
+    "dev": "tsx src/index.ts",
+    "start": "node dist/index.js"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "dependencies": {},
+  "devDependencies": {
+    "@types/node": "^20.11.0",
+    "tsx": "^4.21.0",
+    "typescript": "^5.3.0"
+  }
+}

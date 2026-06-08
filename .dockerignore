@@ -1,0 +1,46 @@
+# Keep Docker contexts lean. Anything not listed here is sent to the
+# daemon, so excluding node_modules / build outputs is a multi-GB +
+# multi-minute saving on every build.
+
+**/node_modules
+**/dist
+**/lib
+**/build
+**/.expo
+**/.next
+
+# Git + tooling
+.git
+.gitignore
+.github
+.claude
+.vscode
+.idea
+
+# Build artifacts the web image doesn't need
+playwright-report
+test-results
+tests
+*.ipa
+*.aab
+*.apk
+*.tar.gz
+*.jks
+*.keystore
+
+# Secrets — defense in depth so a stray `git add` or .env doesn't ship
+.env
+.env.*
+google-services.json
+service-account.json
+firebase-debug.log
+
+# Mobile-only — the OSS web build never needs Expo native bits
+packages/mobile/scripts
+eas.json
+google-services.json
+
+# Docs / meta
+*.md
+docs
+website

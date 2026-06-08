@@ -1,0 +1,288 @@
+# DashTerm homehub — single-host self-hostable bundle.
+#
+# Brings up:
+#   - Postgres (Supabase-flavoured image; ships realtime replication slots)
+#   - GoTrue (auth)
+#   - PostgREST (REST/CRUD API used by supabase-js)
+#   - Realtime (Postgres → websocket fanout)
+#   - Storage (object store; optional but kept for parity with FB)
+#   - Kong (API gateway — single port for all the above)
+#   - Studio (admin UI, dev-only)
+#   - dashterm-compile (TSX → JS compiler for vibe-coded apps)
+#   - dashterm-web (Caddy serving the built web bundle)
+#
+# Run from the bundle directory:
+#   cp .env.example .env       # then fill in the secrets
+#   docker compose up -d
+#   docker compose logs -f
+#
+# Migrations live in ./migrations/*.sql and apply at first start via the
+# Postgres image's standard /docker-entrypoint-initdb.d/ hook. To re-run a
+# migration on an existing DB, copy it into the container or use:
+#   docker compose exec postgres psql -U postgres -d dashterm -f /migrations/001_init.sql
+#
+# Requires Docker Engine 20.10+ and Docker Compose v2.6+ (top-level `name:`
+# and `--wait` flag). Most operators have newer; if you're on older
+# Compose, upgrade with: `docker plugin install compose` or update Docker
+# Desktop. The project name defaults to the directory ("homehub") if you'd
+# rather not depend on the `name:` key.
+
+x-shared-env: &shared-env
+  POSTGRES_HOST: postgres
+  POSTGRES_PORT: ${POSTGRES_PORT:-5432}
+  POSTGRES_DB: ${POSTGRES_DB:-dashterm}
+  POSTGRES_USER: ${POSTGRES_USER:-postgres}
+  POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}
+  JWT_SECRET: ${JWT_SECRET:?JWT_SECRET is required (32+ random chars)}
+  ANON_KEY: ${ANON_KEY:?ANON_KEY is required (run cli init to generate)}
+  SERVICE_ROLE_KEY: ${SERVICE_ROLE_KEY:?SERVICE_ROLE_KEY is required (run cli init)}
+
+services:
+  # -------------------------------------------------------------------------
+  # Postgres — Supabase image so realtime/wal-level setup ships preconfigured
+  # -------------------------------------------------------------------------
+  postgres:
+    image: supabase/postgres:15.6.1.146
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-dashterm}
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      JWT_SECRET: ${JWT_SECRET}
+      JWT_EXP: 3600
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+      # postgres-init/ runs once on first DB init via the standard
+      # /docker-entrypoint-initdb.d/ hook — only for things that need to
+      # be in place BEFORE auth/storage/realtime first connect (i.e.,
+      # service-role passwords).
+      #
+      # The schema migrations themselves (./migrations) are NOT mounted
+      # here. They reference auth.users, which GoTrue creates lazily on
+      # first boot; they're applied later by `dashterm homehub migrate`,
+      # which the `up` command runs automatically.
+      - ./postgres-init:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD", "pg_isready", "-U", "${POSTGRES_USER:-postgres}", "-d", "${POSTGRES_DB:-dashterm}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    ports:
+      - "${POSTGRES_PORT_EXPOSED:-54322}:5432"
+
+  # -------------------------------------------------------------------------
+  # Auth (GoTrue)
+  # -------------------------------------------------------------------------
+  auth:
+    image: supabase/gotrue:v2.158.1
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      <<: *shared-env
+      GOTRUE_API_HOST: 0.0.0.0
+      GOTRUE_API_PORT: 9999
+      API_EXTERNAL_URL: ${PUBLIC_URL:-http://localhost:8000}
+      GOTRUE_DB_DRIVER: postgres
+      GOTRUE_DB_DATABASE_URL: postgres://supabase_auth_admin:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-dashterm}
+      GOTRUE_SITE_URL: ${PUBLIC_URL:-http://localhost:8000}
+      GOTRUE_URI_ALLOW_LIST: ${PUBLIC_URL:-http://localhost:8000},http://localhost:8082
+      # Closed signup — the operator invites users via
+      # `dashterm homehub add-user`. First login uses the seeded admin account
+      # (admin@localhost / changeme), which is force-reset before the dashboard
+      # renders.
+      GOTRUE_DISABLE_SIGNUP: "true"
+      GOTRUE_JWT_SECRET: ${JWT_SECRET}
+      GOTRUE_JWT_EXP: 3600
+      GOTRUE_JWT_DEFAULT_GROUP_NAME: authenticated
+      GOTRUE_EXTERNAL_EMAIL_ENABLED: "true"
+      GOTRUE_MAILER_AUTOCONFIRM: "true"
+      # Google OAuth — optional. Operator fills in their own client.
+      GOTRUE_EXTERNAL_GOOGLE_ENABLED: ${GOOGLE_OAUTH_ENABLED:-false}
+      GOTRUE_EXTERNAL_GOOGLE_CLIENT_ID: ${GOOGLE_OAUTH_CLIENT_ID:-}
+      GOTRUE_EXTERNAL_GOOGLE_SECRET: ${GOOGLE_OAUTH_SECRET:-}
+      GOTRUE_EXTERNAL_GOOGLE_REDIRECT_URI: ${PUBLIC_URL:-http://localhost:8000}/auth/v1/callback
+
+  # -------------------------------------------------------------------------
+  # PostgREST — REST API used by supabase-js
+  # -------------------------------------------------------------------------
+  rest:
+    image: postgrest/postgrest:v12.2.0
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      PGRST_DB_URI: postgres://authenticator:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-dashterm}
+      PGRST_DB_SCHEMAS: public
+      PGRST_DB_ANON_ROLE: anon
+      PGRST_JWT_SECRET: ${JWT_SECRET}
+      PGRST_DB_USE_LEGACY_GUCS: "false"
+
+  # -------------------------------------------------------------------------
+  # Realtime — websocket fanout for postgres_changes
+  # -------------------------------------------------------------------------
+  realtime:
+    image: supabase/realtime:v2.30.34
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      <<: *shared-env
+      DB_HOST: postgres
+      DB_PORT: 5432
+      DB_USER: supabase_admin
+      DB_PASSWORD: ${POSTGRES_PASSWORD}
+      DB_NAME: ${POSTGRES_DB:-dashterm}
+      DB_AFTER_CONNECT_QUERY: SET search_path TO _realtime
+      DB_ENC_KEY: ${REALTIME_ENC_KEY:?REALTIME_ENC_KEY is required (run cli init)}
+      API_JWT_SECRET: ${JWT_SECRET}
+      APP_NAME: realtime
+      # SEED_SELF_HOST flips Realtime out of multi-tenant Fly mode into the
+      # single-tenant self-host config we want. Without it, the service tries
+      # to clusterise + look up tenants in a config table and never creates
+      # the supabase_realtime publication.
+      SEED_SELF_HOST: "true"
+      PORT: 4000
+      # libcluster needs an empty DNS_NODES on single-node — otherwise it
+      # tries to resolve "realtime" via DNS and emits libcluster errors
+      # in a tight loop.
+      DNS_NODES: "''"
+      ERL_AFLAGS: -proto_dist inet_tcp
+      FLY_ALLOC_ID: fly123
+      FLY_APP_NAME: realtime
+      SECRET_KEY_BASE: ${REALTIME_SECRET_KEY_BASE:?REALTIME_SECRET_KEY_BASE is required}
+      RLIMIT_NOFILE: 1048576
+
+  # -------------------------------------------------------------------------
+  # Storage — object store with size accounting, RLS-aware
+  # -------------------------------------------------------------------------
+  storage:
+    image: supabase/storage-api:v1.11.13
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      <<: *shared-env
+      ANON_KEY: ${ANON_KEY}
+      SERVICE_KEY: ${SERVICE_ROLE_KEY}
+      POSTGREST_URL: http://rest:3000
+      PGRST_JWT_SECRET: ${JWT_SECRET}
+      DATABASE_URL: postgres://supabase_storage_admin:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-dashterm}
+      FILE_SIZE_LIMIT: 52428800
+      STORAGE_BACKEND: file
+      FILE_STORAGE_BACKEND_PATH: /var/lib/storage
+      TENANT_ID: stub
+      REGION: stub
+      GLOBAL_S3_BUCKET: stub
+    volumes:
+      - storage-data:/var/lib/storage
+
+  # -------------------------------------------------------------------------
+  # Kong — single public entrypoint for auth/rest/realtime/storage
+  #
+  # Kong's declarative config doesn't expand ${...} placeholders on its own,
+  # so we use the standard Supabase pattern: a bash entrypoint that runs
+  # the template through `eval "echo \"$(cat ...)\""` before starting Kong.
+  # That substitutes SUPABASE_ANON_KEY / SUPABASE_SERVICE_ROLE_KEY into the
+  # consumer credentials.
+  # -------------------------------------------------------------------------
+  kong:
+    image: kong:2.8.1
+    restart: unless-stopped
+    depends_on:
+      - auth
+      - rest
+      - realtime
+      - storage
+    environment:
+      KONG_DATABASE: "off"
+      KONG_DECLARATIVE_CONFIG: /home/kong/kong.yml
+      KONG_DNS_ORDER: LAST,A,CNAME
+      KONG_PLUGINS: request-transformer,cors,key-auth,acl
+      KONG_NGINX_PROXY_PROXY_BUFFER_SIZE: 160k
+      KONG_NGINX_PROXY_PROXY_BUFFERS: 64 160k
+      SUPABASE_ANON_KEY: ${ANON_KEY}
+      SUPABASE_SERVICE_ROLE_KEY: ${SERVICE_ROLE_KEY}
+    volumes:
+      - ./kong.yml:/home/kong/temp.yml:ro
+    # `sed` substitution (instead of the older Supabase `eval echo`
+    # pattern) — bash's eval eats YAML quotes, turning
+    # `_format_version: "2.1"` into `_format_version: 2.1`, which Kong
+    # then rejects as "expected a string". `sed` does targeted
+    # replacement and leaves the rest of the YAML intact.
+    #
+    # Escaping reminder: Compose treats `$$` as a literal `$` (otherwise
+    # it tries to interpolate from the host env). `\$${VAR}` reaches bash
+    # as `\${VAR}`, which inside double quotes is the literal placeholder
+    # we want sed to search for. `$$VAR` reaches bash as `$VAR`, which
+    # bash expands from the container's environment.
+    entrypoint:
+      - bash
+      - -c
+      - 'sed -e "s|\$${SUPABASE_ANON_KEY}|$$SUPABASE_ANON_KEY|g" -e "s|\$${SUPABASE_SERVICE_ROLE_KEY}|$$SUPABASE_SERVICE_ROLE_KEY|g" /home/kong/temp.yml > /home/kong/kong.yml && /docker-entrypoint.sh kong docker-start'
+    ports:
+      - "${KONG_HTTP_PORT:-8000}:8000"
+
+  # -------------------------------------------------------------------------
+  # Studio — admin UI (dev only; comment out or expose behind auth in prod)
+  # -------------------------------------------------------------------------
+  studio:
+    image: supabase/studio:20241007-2c61bef
+    restart: unless-stopped
+    depends_on:
+      - kong
+    environment:
+      STUDIO_PG_META_URL: http://meta:8080
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      DEFAULT_ORGANIZATION_NAME: DashTerm
+      DEFAULT_PROJECT_NAME: homehub
+      SUPABASE_URL: http://kong:8000
+      SUPABASE_PUBLIC_URL: ${PUBLIC_URL:-http://localhost:8000}
+      SUPABASE_ANON_KEY: ${ANON_KEY}
+      SUPABASE_SERVICE_KEY: ${SERVICE_ROLE_KEY}
+    ports:
+      - "${STUDIO_PORT:-3001}:3000"
+    profiles: ["dev"]
+
+  # -------------------------------------------------------------------------
+  # dashterm-compile — TSX → JS compiler for vibe-coded custom apps
+  # -------------------------------------------------------------------------
+  compile:
+    build:
+      context: ../compile-server
+      dockerfile: ../homehub/Dockerfile.compile
+    restart: unless-stopped
+    environment:
+      PORT: 8089
+      NODE_ENV: production
+    ports:
+      - "${COMPILE_PORT:-8089}:8089"
+
+  # -------------------------------------------------------------------------
+  # dashterm-web — Caddy serving the built web bundle
+  # -------------------------------------------------------------------------
+  web:
+    build:
+      context: ../..
+      dockerfile: services/homehub/Dockerfile.web
+      args:
+        EXPO_PUBLIC_BACKEND: supabase
+        EXPO_PUBLIC_SUPABASE_URL: ${PUBLIC_URL:-http://localhost:8000}
+        EXPO_PUBLIC_SUPABASE_ANON_KEY: ${ANON_KEY}
+        # The browser hits the compile container directly on the host port.
+        # If you put the stack behind a reverse proxy with a /compile path,
+        # override this to your full URL (e.g. https://dashterm.example.com).
+        EXPO_PUBLIC_COMPILE_URL: ${EXPO_PUBLIC_COMPILE_URL:-http://localhost:${COMPILE_PORT:-8089}}
+    restart: unless-stopped
+    environment:
+      PUBLIC_URL: ${PUBLIC_URL:-http://localhost:8082}
+    ports:
+      - "${WEB_PORT:-8082}:80"
+
+volumes:
+  postgres-data:
+  storage-data:

@@ -1,0 +1,183 @@
+name: Create Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      version_type:
+        description: 'Version increment type'
+        required: true
+        type: choice
+        options:
+          - patch
+          - minor
+          - major
+        default: 'patch'
+      custom_version:
+        description: 'Custom version (leave empty to auto-increment)'
+        required: false
+        type: string
+
+jobs:
+  create-release:
+    name: Create Release
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Get latest release version
+        id: latest
+        run: |
+          # Get the latest tag (sorted by version)
+          LATEST_TAG=$(git tag --sort=-v:refname | head -1)
+          if [ -z "$LATEST_TAG" ]; then
+            echo "No existing tags found, starting from 0.0.0"
+            LATEST_TAG="0.0.0"
+          fi
+          echo "latest_version=$LATEST_TAG" >> $GITHUB_OUTPUT
+          echo "Latest version: $LATEST_TAG"
+
+      - name: Calculate new version
+        id: version
+        run: |
+          LATEST="${{ steps.latest.outputs.latest_version }}"
+          CUSTOM="${{ github.event.inputs.custom_version }}"
+          TYPE="${{ github.event.inputs.version_type }}"
+
+          if [ -n "$CUSTOM" ]; then
+            # Use custom version if provided
+            NEW_VERSION="$CUSTOM"
+            echo "Using custom version: $NEW_VERSION"
+          else
+            # Parse current version
+            IFS='.' read -r MAJOR MINOR PATCH <<< "$LATEST"
+
+            case "$TYPE" in
+              major)
+                MAJOR=$((MAJOR + 1))
+                MINOR=0
+                PATCH=0
+                ;;
+              minor)
+                MINOR=$((MINOR + 1))
+                PATCH=0
+                ;;
+              patch)
+                PATCH=$((PATCH + 1))
+                ;;
+            esac
+
+            NEW_VERSION="${MAJOR}.${MINOR}.${PATCH}"
+            echo "Auto-incremented version ($TYPE): $LATEST -> $NEW_VERSION"
+          fi
+
+          echo "new_version=$NEW_VERSION" >> $GITHUB_OUTPUT
+
+      - name: Generate release notes
+        id: notes
+        run: |
+          LATEST="${{ steps.latest.outputs.latest_version }}"
+          NEW="${{ steps.version.outputs.new_version }}"
+
+          # Get commits since last tag
+          if git rev-parse "$LATEST" >/dev/null 2>&1; then
+            COMMITS=$(git log --pretty=format:"- %s" "$LATEST"..HEAD)
+          else
+            COMMITS=$(git log --pretty=format:"- %s" -20)
+          fi
+
+          # Create release notes
+          cat > release_notes.md << 'NOTES_EOF'
+          ## What's Changed
+
+          $COMMITS
+
+          ## Build Status
+
+          This release triggers automatic builds via EAS.
+
+          ---
+          *Version $NEW | Auto-generated release*
+          NOTES_EOF
+
+          # Use envsubst for variable substitution
+          export COMMITS NEW
+          envsubst < release_notes.md > release_notes_final.md
+          mv release_notes_final.md release_notes.md
+
+          echo "Generated release notes"
+
+      - name: Create tag
+        run: |
+          NEW_VERSION="${{ steps.version.outputs.new_version }}"
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git tag -a "$NEW_VERSION" -m "Release $NEW_VERSION"
+          git push origin "$NEW_VERSION"
+          echo "Created and pushed tag: $NEW_VERSION"
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v1
+        with:
+          tag_name: ${{ steps.version.outputs.new_version }}
+          name: Release ${{ steps.version.outputs.new_version }}
+          body_path: release_notes.md
+          draft: false
+          prerelease: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Summary
+        run: |
+          echo "## Release Created" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Version:** ${{ steps.version.outputs.new_version }}" >> $GITHUB_STEP_SUMMARY
+          echo "**Previous:** ${{ steps.latest.outputs.latest_version }}" >> $GITHUB_STEP_SUMMARY
+          echo "**Type:** ${{ github.event.inputs.version_type }}" >> $GITHUB_STEP_SUMMARY
+
+    outputs:
+      new_version: ${{ steps.version.outputs.new_version }}
+
+  build:
+    name: Build Release
+    needs: create-release
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.create-release.outputs.new_version }}
+
+      - uses: actions/setup-node@v4
+        with:
+          cache: npm
+
+      - name: Setup Expo and EAS
+        uses: expo/expo-github-action@v8
+        with:
+          eas-version: latest
+          token: ${{ secrets.EXPO_TOKEN }}
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Update version in app.config.ts
+        run: |
+          VERSION="${{ needs.create-release.outputs.new_version }}"
+          sed -i "s/version: process.env.APP_VERSION || '[^']*'/version: '$VERSION'/" app.config.ts
+          echo "Updated app.config.ts:"
+          grep "version:" app.config.ts
+
+      - name: Build on EAS
+        run: eas build --platform all --non-interactive --no-wait --profile production --auto-submit
+
+      - name: Build Summary
+        run: |
+          echo "## EAS Build Started" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Version:** ${{ needs.create-release.outputs.new_version }}" >> $GITHUB_STEP_SUMMARY
+          echo "**Platforms:** iOS & Android" >> $GITHUB_STEP_SUMMARY
+          echo "**Profile:** production" >> $GITHUB_STEP_SUMMARY
+          echo "**Auto-submit:** enabled" >> $GITHUB_STEP_SUMMARY

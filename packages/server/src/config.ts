@@ -1,0 +1,68 @@
+/**
+ * Runtime configuration for the gateway.
+ *
+ * Sources (highest precedence first):
+ *   1. CLI flags (--port, --bind, --data-dir)
+ *   2. Environment variables (DASHTERM_PORT, DASHTERM_BIND, DASHTERM_DATA_DIR)
+ *   3. Defaults below
+ *
+ * The CLI parses flags and overrides env before importing this module.
+ */
+
+import fs from 'fs';
+import { homedir } from 'os';
+import path from 'path';
+
+export interface GatewayConfig {
+  port: number;
+  bind: string;
+  dataDir: string;
+  webBundleDir: string | null;  // null in dev (web served by Expo)
+  jwtSecretPath: string;
+  // Permissive CORS for the dev cross-origin case (Expo on :8081 talking to
+  // the gateway on :8765). Production serves the bundle from the same origin
+  // so CORS doesn't matter.
+  devCorsOrigin: string | null;
+}
+
+// Look for a built web bundle in the conventional spot next to this package.
+// install.sh runs `expo export --platform web --output-dir web-dist` from
+// the repo root, so a global install sees:
+//   <install-root>/web-dist/index.html
+//   <install-root>/packages/server/dist/config.js   ← this file
+// __dirname resolves to packages/server/dist (or packages/server/src under
+// tsx); the bundle is two or three levels up.
+function findBundledWeb(): string | null {
+  const candidates = [
+    path.resolve(__dirname, '../..', 'web-dist'),     // dist build
+    path.resolve(__dirname, '../../..', 'web-dist'),  // tsx (src)
+  ];
+  for (const dir of candidates) {
+    if (fs.existsSync(path.join(dir, 'index.html'))) return dir;
+  }
+  return null;
+}
+
+export function loadConfig(overrides: Partial<GatewayConfig> = {}): GatewayConfig {
+  const dataDir =
+    overrides.dataDir ??
+    process.env.DASHTERM_DATA_DIR ??
+    path.join(homedir(), '.dashterm');
+
+  const webBundleDir =
+    overrides.webBundleDir ??
+    process.env.DASHTERM_WEB_BUNDLE ??
+    findBundledWeb();
+
+  return {
+    port: overrides.port ?? parseInt(process.env.DASHTERM_PORT ?? '8765', 10),
+    bind: overrides.bind ?? process.env.DASHTERM_BIND ?? '127.0.0.1',
+    dataDir,
+    webBundleDir,
+    jwtSecretPath: overrides.jwtSecretPath ?? path.join(dataDir, 'jwt-secret'),
+    devCorsOrigin:
+      overrides.devCorsOrigin ??
+      process.env.DASHTERM_DEV_CORS_ORIGIN ??
+      null,
+  };
+}
