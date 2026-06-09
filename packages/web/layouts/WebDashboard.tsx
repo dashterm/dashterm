@@ -26,7 +26,7 @@ import { CommandPalette } from "../../core/components/common";
 import AppInfoButton from "../../core/components/common/AppInfoButton";
 import AppSettingsButton from "../../core/components/common/AppSettingsButton";
 import AppRenderer from "../../core/components/common/AppRenderer";
-import { relayUrlToApiBase } from "../../core/utils/dashtermUrl";
+import { gatewayApiBase } from "../../core/utils/dashtermUrl";
 import { useKeyboardShortcut } from "../../core/hooks/useKeyboardShortcut";
 import { useOverlayShortcuts } from "../../core/hooks/useOverlayShortcuts";
 import OverlayHost from "../../core/components/overlays/OverlayHost";
@@ -312,9 +312,10 @@ export default function WebDashboard({
     setNewSpaceName("");
   };
 
-  // Per-user relay API base for vibe-coded apps. Sourced from the user's
-  // AgenticCoder relay URL in the user-state blob — no env vars, no hardcoding.
-  const apiBase = relayUrlToApiBase(state.overlays?.agenticCoder?.relayUrl);
+  // API base for vibe-coded apps. They talk to the native gateway (where their
+  // data + the host-probe endpoints live), which is the single backend — not
+  // the AgenticCoder relay. Derived from the gateway URL (same origin in prod).
+  const apiBase = gatewayApiBase();
 
   // Helper to render app content using the shared AppRenderer component
   const renderAppContent = (appLayout: SpaceAppLayout) => {

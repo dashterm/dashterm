@@ -12,6 +12,18 @@ export function relayUrlToApiBase(relayUrl: string | undefined | null): string {
     .replace(/\/+$/, '')}/api`;
 }
 
+// The native gateway's API base (e.g. http://localhost:8765/api). Custom apps
+// hit this via window.DASHTERM_API_BASE for ALL data — the gateway is the single
+// backend now (app data, state, host probes all live there), independent of
+// where the AgenticCoder relay runs. In dev EXPO_PUBLIC_GATEWAY_URL points at
+// the gateway; in prod it serves the bundle same-origin, so fall back to origin.
+export function gatewayApiBase(): string {
+  const base =
+    (process.env.EXPO_PUBLIC_GATEWAY_URL as string) ||
+    (typeof window !== 'undefined' && window.location ? window.location.origin : '');
+  return base ? `${base.replace(/\/+$/, '')}/api` : '';
+}
+
 // Extract the bare origin (scheme://host[:port]) from an apiBase URL — used as
 // the WebView's baseUrl on mobile so vibe-coded apps run same-origin with the
 // relay instead of from a null origin (which trips iOS WKWebView's fetch).
