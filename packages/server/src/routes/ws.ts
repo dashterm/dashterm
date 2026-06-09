@@ -12,19 +12,13 @@
  */
 
 import type { FastifyInstance } from 'fastify';
-import websocketPlugin from '@fastify/websocket';
 import { getUserFromRequest } from './auth';
 import { registerSocket, unregisterSocket } from '../realtime';
 import type { GatewayConfig } from '../config';
 
+// @fastify/websocket is registered once at app level in index.ts so multiple
+// routes can be `{ websocket: true }`. This module just declares the route.
 export async function registerWsRoutes(app: FastifyInstance, config: GatewayConfig) {
-  await app.register(websocketPlugin, {
-    options: {
-      // Reject jumbo frames; the gateway speaks small JSON envelopes only.
-      maxPayload: 64 * 1024,
-    },
-  });
-
   app.get('/api/ws', { websocket: true }, (socket, req) => {
     const ctx = getUserFromRequest(req, config);
     if (!ctx) {

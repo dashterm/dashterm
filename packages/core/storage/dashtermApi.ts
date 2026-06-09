@@ -324,6 +324,11 @@ export class DashTermApiStorageProvider implements StorageProvider {
 
       sock.onopen = () => {
         this.reconnectAttempts = 0;
+        // Catch up on anything that changed while the socket was down (or
+        // before it first connected): a missed `apps:changed` broadcast —
+        // e.g. an agent push that landed during a reconnect — would otherwise
+        // leave the custom-app list stale until the next broadcast or reload.
+        if (this.appsListeners.size > 0) void this.fetchAndDispatchApps();
       };
 
       sock.onmessage = (ev: MessageEvent) => {

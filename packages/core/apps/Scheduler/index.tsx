@@ -103,16 +103,9 @@ export default function Scheduler({ appState, onUpdate, relatedWorkspaceNames }:
     setConn('connecting');
 
     const url = normalizeWsUrl(relayUrl);
-    let idToken: string;
-    try {
-      const t = await authProvider.getIdToken();
-      if (!t) throw new Error('not signed in');
-      idToken = t;
-    } catch (err: any) {
-      setError(err?.message || 'failed to get id token');
-      setConn('error');
-      return;
-    }
+    // Native gateway authenticates by session cookie; token is optional.
+    let idToken: string | null = null;
+    try { idToken = await authProvider.getIdToken(); } catch { idToken = null; }
 
     let ws: WebSocket;
     try { ws = new WebSocket(url); }
@@ -125,7 +118,7 @@ export default function Scheduler({ appState, onUpdate, relatedWorkspaceNames }:
 
     ws.onopen = () => {
       setConn('authing');
-      ws.send(JSON.stringify({ type: 'auth', idToken, workspace, resume: true }));
+      ws.send(JSON.stringify({ type: 'auth', ...(idToken ? { idToken } : {}), workspace, resume: true }));
     };
     ws.onerror = (e: any) => {
       setError(e?.message || 'websocket error');

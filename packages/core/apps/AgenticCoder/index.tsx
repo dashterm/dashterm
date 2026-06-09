@@ -88,7 +88,18 @@ interface Props {
   relatedWorkspaceNames?: string[];
 }
 
-const DEFAULT_RELAY_URL = (process.env.EXPO_PUBLIC_DASHTERM_URL as string) || '';
+// Relay URL default. The gateway now hosts the agent itself at /api/agent/ws,
+// so with nothing configured we point at the same gateway the rest of the app
+// talks to. An explicit EXPO_PUBLIC_DASHTERM_URL (external relay) still wins.
+function defaultRelayUrl(): string {
+  const explicit = (process.env.EXPO_PUBLIC_DASHTERM_URL as string) || '';
+  if (explicit) return explicit;
+  const gateway =
+    (process.env.EXPO_PUBLIC_GATEWAY_URL as string) ||
+    (typeof window !== 'undefined' && window.location ? window.location.origin : '');
+  return gateway ? `${gateway.replace(/\/+$/, '')}/api/agent` : '';
+}
+const DEFAULT_RELAY_URL = defaultRelayUrl();
 const DEFAULT_WORKSPACE = 'default';
 
 type ConnState = 'idle' | 'connecting' | 'authing' | 'ready' | 'closed' | 'error';
@@ -386,16 +397,11 @@ export default function AgenticCoder({ appState, onUpdate, relatedWorkspaceNames
     append(mkLine('system', `> connecting to ${relayUrl} (workspace: ${ws_name}${wantResume ? '' : ', fresh session'})`));
 
     const url = normalizeWsUrl(relayUrl);
-    let idToken: string;
-    try {
-      const t = await authProvider.getIdToken();
-      if (!t) throw new Error('not signed in');
-      idToken = t;
-    } catch (err: any) {
-      setError(err?.message || 'failed to get id token');
-      setConn('error');
-      return;
-    }
+    // The native gateway authenticates the WebSocket by session cookie, so a
+    // bearer token is optional and ignored. External relays still validate it
+    // when present — so send it if we have one, but don't fail when we don't.
+    let idToken: string | null = null;
+    try { idToken = await authProvider.getIdToken(); } catch { idToken = null; }
 
     let ws: WebSocket;
     try { ws = new WebSocket(url); }
@@ -411,7 +417,7 @@ export default function AgenticCoder({ appState, onUpdate, relatedWorkspaceNames
       setConn('authing');
       ws.send(JSON.stringify({
         type: 'auth',
-        idToken,
+        ...(idToken ? { idToken } : {}),
         workspace: ws_name,
         resume: wantResume,
       }));

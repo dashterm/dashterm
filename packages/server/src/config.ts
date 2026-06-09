@@ -23,6 +23,16 @@ export interface GatewayConfig {
   // the gateway on :8765). Production serves the bundle from the same origin
   // so CORS doesn't matter.
   devCorsOrigin: string | null;
+  // AgenticCoder/Scheduler agent: the gateway spawns `claude` to vibe-code
+  // apps. This runs with --permission-mode bypassPermissions, i.e. arbitrary
+  // file writes + Bash on the host as the gateway user, for any signed-in
+  // user. OFF by default; `npm run dev` turns it on for localhost. Don't
+  // enable on a 0.0.0.0-bound gateway without rotating the default admin.
+  agentEnabled: boolean;
+  claudeBin: string;                   // `claude` binary to spawn
+  claudeModel: string | null;          // --model override; null = CLI default
+  agentPermissionMode: string;         // --permission-mode value
+  agentRoot: string;                   // root dir for per-user workspaces
 }
 
 // Look for a built web bundle in the conventional spot next to this package.
@@ -50,6 +60,10 @@ export function loadConfig(overrides: Partial<GatewayConfig> = {}): GatewayConfi
     process.env.DASHTERM_WEB_BUNDLE ??
     findBundledWeb();
 
+  const agentEnabled =
+    overrides.agentEnabled ??
+    ['1', 'true', 'yes'].includes((process.env.DASHTERM_AGENT_ENABLED ?? '').toLowerCase());
+
   return {
     port: overrides.port ?? parseInt(process.env.DASHTERM_PORT ?? '8765', 10),
     bind: overrides.bind ?? process.env.DASHTERM_BIND ?? '127.0.0.1',
@@ -60,5 +74,13 @@ export function loadConfig(overrides: Partial<GatewayConfig> = {}): GatewayConfi
       overrides.devCorsOrigin ??
       process.env.DASHTERM_DEV_CORS_ORIGIN ??
       null,
+    agentEnabled,
+    claudeBin: overrides.claudeBin ?? process.env.DASHTERM_CLAUDE_BIN ?? 'claude',
+    claudeModel: overrides.claudeModel ?? process.env.DASHTERM_CLAUDE_MODEL ?? null,
+    agentPermissionMode:
+      overrides.agentPermissionMode ??
+      process.env.DASHTERM_AGENT_PERMISSION_MODE ??
+      'bypassPermissions',
+    agentRoot: overrides.agentRoot ?? path.join(dataDir, 'agent-workspaces'),
   };
 }

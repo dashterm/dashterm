@@ -6,6 +6,7 @@
 import fastifyCookie from '@fastify/cookie';
 import fastifyCors from '@fastify/cors';
 import fastifyStatic from '@fastify/static';
+import websocketPlugin from '@fastify/websocket';
 import Fastify, { type FastifyInstance } from 'fastify';
 import fs from 'fs';
 import path from 'path';
@@ -19,6 +20,7 @@ import { registerCompileRoutes } from './routes/compile';
 import { registerAiRoutes } from './routes/ai';
 import { registerSecretsRoutes } from './routes/secrets';
 import { registerWsRoutes } from './routes/ws';
+import { registerAgentRoutes } from './routes/agent';
 
 export interface StartedGateway {
   app: FastifyInstance;
@@ -55,6 +57,13 @@ export async function createServer(
     });
   }
 
+  // Register @fastify/websocket once at app level so multiple routes can be
+  // `{ websocket: true }`. /api/ws speaks tiny JSON envelopes; /api/agent/ws
+  // carries base64 image payloads, so the limit is sized for the larger case.
+  await app.register(websocketPlugin, {
+    options: { maxPayload: 16 * 1024 * 1024 },
+  });
+
   await registerWsRoutes(app, config);
   await registerAuthRoutes(app, config);
   await registerStateRoutes(app, config);
@@ -63,6 +72,7 @@ export async function createServer(
   await registerCompileRoutes(app);
   await registerAiRoutes(app, config);
   await registerSecretsRoutes(app, config);
+  await registerAgentRoutes(app, config);
 
   app.get('/api/health', async () => ({ ok: true }));
 
