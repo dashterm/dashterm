@@ -21,6 +21,7 @@ import { registerAiRoutes } from './routes/ai';
 import { registerSecretsRoutes } from './routes/secrets';
 import { registerWsRoutes } from './routes/ws';
 import { registerAgentRoutes } from './routes/agent';
+import { registerHostsRoutes } from './routes/hosts';
 
 export interface StartedGateway {
   app: FastifyInstance;
@@ -73,6 +74,7 @@ export async function createServer(
   await registerAiRoutes(app, config);
   await registerSecretsRoutes(app, config);
   await registerAgentRoutes(app, config);
+  await registerHostsRoutes(app, config);
 
   app.get('/api/health', async () => ({ ok: true }));
 
