@@ -167,6 +167,10 @@ export default function AgenticCoder({ appState, onUpdate, relatedWorkspaceNames
   const [conn, setConn] = useState<ConnState>('idle');
   const [error, setError] = useState<string | null>(null);
   const [input, setInput] = useState('');
+  // Live text Claude is currently generating (from --include-partial-messages
+  // deltas). Shown in the working indicator as a "thinking" preview, then
+  // cleared once the full message lands in the log.
+  const [streamingText, setStreamingText] = useState('');
   // `liveLog` is the in-memory log for the LIVE session (sessions[0]). When
   // the user is viewing an archived session, we show that session's stored
   // log instead — `liveLog` keeps streaming in the background.
@@ -499,6 +503,7 @@ export default function AgenticCoder({ appState, onUpdate, relatedWorkspaceNames
           append(mkLine('system', `> claude finished (exit ${msg.code})`));
           append(mkLine('turn_end', '─────────────────────────────────────'));
           setWaitingForReply(false);
+          setStreamingText('');
           // Refresh workspace list so app counts / last activity update.
           ws.send(JSON.stringify({ type: 'list_workspaces' }));
           break;
@@ -534,11 +539,22 @@ export default function AgenticCoder({ appState, onUpdate, relatedWorkspaceNames
 
     function renderClaudeEvent(event: any) {
       if (!event || typeof event !== 'object') return;
+      // Partial-message deltas (--include-partial-messages): accumulate text as
+      // it streams so the working indicator shows a live "thinking" preview.
+      if (event.type === 'stream_event') {
+        const se = event.event;
+        if (se?.type === 'content_block_delta' && se.delta?.type === 'text_delta') {
+          setStreamingText((prev) => (prev + se.delta.text).slice(-4000));
+        }
+        return;
+      }
       if (event.type === 'system' && event.subtype === 'init') {
         append(mkLine('system', `> claude session ${shortenSessionId(event.session_id)}`));
         return;
       }
       if (event.type === 'assistant' && event.message?.content) {
+        // The full message has arrived — the streamed preview's job is done.
+        setStreamingText('');
         for (const block of event.message.content) {
           if (block.type === 'text' && block.text) {
             append(mkLine('assistant', block.text));
@@ -565,6 +581,7 @@ export default function AgenticCoder({ appState, onUpdate, relatedWorkspaceNames
       }
       if (event.type === 'result') {
         setWaitingForReply(false);
+        setStreamingText('');
         if (event.is_error) {
           append(mkLine('error', `! result: ${event.result || 'unknown error'}`));
         }
@@ -608,6 +625,7 @@ export default function AgenticCoder({ appState, onUpdate, relatedWorkspaceNames
     append(mkLine('user', logText));
     setInput('');
     setAttachedImages([]);
+    setStreamingText('');
     setWaitingForReply(true);
   }, [append, attachedImages, conn, input]);
 
@@ -1186,7 +1204,7 @@ export default function AgenticCoder({ appState, onUpdate, relatedWorkspaceNames
         )}
       </ScrollView>
 
-      {waitingForReply && <WorkingIndicator />}
+      {waitingForReply && <WorkingIndicator streamingText={streamingText} />}
 
       {(state.recentPushes || []).length > 0 && (
         <View style={styles.pushesPanel}>
@@ -1260,8 +1278,9 @@ export default function AgenticCoder({ appState, onUpdate, relatedWorkspaceNames
 
 // Live "still working" indicator shown while a turn is in flight. Claude's
 // long tool calls (e.g. ssh) produce gaps with no output; this makes it clear
-// the session is busy, not hung. Mounts fresh each turn so the timer resets.
-function WorkingIndicator() {
+// the session is busy, not hung. When partial-message text is streaming, shows
+// a live tail of it as a "thinking" preview. Mounts fresh each turn.
+function WorkingIndicator({ streamingText }: { streamingText: string }) {
   const [tick, setTick] = useState(0);
   const startRef = useRef(Date.now());
   useEffect(() => {
@@ -1271,10 +1290,17 @@ function WorkingIndicator() {
   const frames = ['|', '/', '-', '\\'];
   const dots = '.'.repeat(tick % 4);
   const elapsed = Math.floor((Date.now() - startRef.current) / 1000);
+  // Show the tail of what's streaming so the box stays a fixed size.
+  const preview = streamingText ? streamingText.slice(-280) : '';
   return (
-    <View style={styles.workingRow}>
-      <Text style={styles.workingText}>{`${frames[tick % frames.length]} claude is working${dots}`}</Text>
-      <Text style={styles.workingMeta}>{`${elapsed}s · STOP to interrupt`}</Text>
+    <View style={styles.workingBox}>
+      <View style={styles.workingRow}>
+        <Text style={styles.workingText}>{`${frames[tick % frames.length]} claude is ${preview ? 'writing' : 'working'}${dots}`}</Text>
+        <Text style={styles.workingMeta}>{`${elapsed}s · STOP to interrupt`}</Text>
+      </View>
+      {preview ? (
+        <Text style={styles.workingStream} numberOfLines={3}>{preview}</Text>
+      ) : null}
     </View>
   );
 }
@@ -1665,10 +1691,7 @@ const styles = StyleSheet.create({
   },
   stopButtonText: { fontFamily: 'Courier New', fontSize: 11, color: '#ff0000' },
   disabled: { opacity: 0.4 },
-  workingRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
+  workingBox: {
     borderWidth: 1,
     borderColor: '#665500',
     backgroundColor: 'rgba(40, 30, 0, 0.35)',
@@ -1676,6 +1699,18 @@ const styles = StyleSheet.create({
     paddingVertical: 6,
     marginBottom: 8,
   },
+  workingRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+  },
   workingText: { fontFamily: 'Courier New', fontSize: 12, color: '#ffcc33' },
   workingMeta: { fontFamily: 'Courier New', fontSize: 10, color: '#998800' },
+  workingStream: {
+    fontFamily: 'Courier New',
+    fontSize: 11,
+    color: '#c9b06a',
+    marginTop: 6,
+    lineHeight: 15,
+  },
 });

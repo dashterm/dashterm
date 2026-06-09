@@ -298,6 +298,8 @@ export class AgentSession {
       '--output-format',
       'stream-json',
       '--verbose',
+      // Emit partial-message deltas so the client can show text as it streams.
+      '--include-partial-messages',
       '--permission-mode',
       this.config.agentPermissionMode,
       '--append-system-prompt',
