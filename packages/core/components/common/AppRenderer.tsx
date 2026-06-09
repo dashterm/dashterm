@@ -98,9 +98,13 @@ export const AppRenderer: React.FC<AppRendererProps> = ({
   const customApp = customApps?.[customAppId];
 
   if (customApp) {
+    // Key on version so when the agent re-pushes an edited app, the renderer
+    // remounts and recompiles from the new code — no full page refresh needed.
+    const appKey = `${customApp.id}-v${customApp.version ?? 0}`;
     if (Platform.OS === 'web') {
       return (
         <DynamicAppRenderer
+          key={appKey}
           customApp={customApp}
           appState={instanceState}
           onUpdateState={updateInstance}
@@ -111,6 +115,7 @@ export const AppRenderer: React.FC<AppRendererProps> = ({
     }
     return (
       <WebViewAppRenderer
+        key={appKey}
         customApp={customApp}
         instanceId={instanceId}
         instanceState={instanceState}
