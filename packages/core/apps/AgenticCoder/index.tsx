@@ -9,7 +9,7 @@ import {
   Image,
   Platform,
 } from 'react-native';
-import { authProvider } from '../../storage';
+import { authProvider, storage } from '../../storage';
 
 interface AttachedImage {
   id: string;
@@ -514,6 +514,10 @@ export default function AgenticCoder({ appState, onUpdate, relatedWorkspaceNames
           const prevList = recentPushesRef.current || [];
           const without = prevList.filter((p) => p.shareCode !== pushed.shareCode);
           onUpdate({ recentPushes: [pushed, ...without].slice(0, 10) });
+          // Proactively refresh the dashboard's custom-app list so the new tile
+          // is addable from ⌘K immediately, rather than waiting on the realtime
+          // broadcast (which can be missed during a reconnect).
+          void storage.refreshApps();
           break;
         }
         case 'app_error':
@@ -568,6 +572,19 @@ export default function AgenticCoder({ appState, onUpdate, relatedWorkspaceNames
       }
     }
   }, [append, closeConnection, onUpdate, relayUrl, workspace]);
+
+  // Auto-connect when the panel opens so it "just works" — connecting is cheap
+  // (cookie auth + workspace setup; no claude process spawns until the first
+  // message). Fires only from the initial idle state, so a manual DISCONNECT
+  // stays disconnected; after an unexpected drop, [CONNECT] reconnects.
+  const autoConnectedRef = useRef(false);
+  useEffect(() => {
+    if (autoConnectedRef.current) return;
+    if (conn === 'idle' && relayUrl) {
+      autoConnectedRef.current = true;
+      void connect();
+    }
+  }, [conn, relayUrl, connect]);
 
   const send = useCallback(() => {
     const text = input.trim();
@@ -761,7 +778,10 @@ export default function AgenticCoder({ appState, onUpdate, relatedWorkspaceNames
 
   const addHost = useCallback(() => {
     if (conn !== 'ready' || !wsRef.current || wsRef.current.readyState !== 1) {
-      setError('Connect to the relay first (top-right [CONNECT]).');
+      // Not connected yet — kick off a connect and ask the user to retry.
+      // (Auto-connect on open means this is rarely hit.)
+      setError('Connecting to the gateway — click ADD again in a moment.');
+      if (conn === 'idle' || conn === 'closed' || conn === 'error') void connect();
       return;
     }
     const alias = newHostAlias.trim();
@@ -780,7 +800,7 @@ export default function AgenticCoder({ appState, onUpdate, relatedWorkspaceNames
       port: parsed.port,
       user: parsed.user || undefined,
     }));
-  }, [conn, newHostAlias, newHostTarget]);
+  }, [conn, connect, newHostAlias, newHostTarget]);
 
   const removeHost = useCallback((alias: string) => {
     if (conn !== 'ready' || !wsRef.current || wsRef.current.readyState !== 1) {
@@ -1081,9 +1101,9 @@ export default function AgenticCoder({ appState, onUpdate, relatedWorkspaceNames
               onPress={addHost}
               style={[
                 styles.statusButton,
-                (conn !== 'ready' || !newHostAlias.trim() || !newHostTarget.trim()) && styles.disabled,
+                (!newHostAlias.trim() || !newHostTarget.trim()) && styles.disabled,
               ]}
-              disabled={conn !== 'ready' || !newHostAlias.trim() || !newHostTarget.trim()}
+              disabled={!newHostAlias.trim() || !newHostTarget.trim()}
             >
               <Text style={styles.statusButtonText}>[ ADD ]</Text>
             </Pressable>
@@ -1166,6 +1186,8 @@ export default function AgenticCoder({ appState, onUpdate, relatedWorkspaceNames
         )}
       </ScrollView>
 
+      {waitingForReply && <WorkingIndicator />}
+
       {(state.recentPushes || []).length > 0 && (
         <View style={styles.pushesPanel}>
           <Text style={styles.label}>+-- RECENT PUSHES ({workspace}) --+</Text>
@@ -1232,6 +1254,27 @@ export default function AgenticCoder({ appState, onUpdate, relatedWorkspaceNames
           )}
         </View>
       </View>
+    </View>
+  );
+}
+
+// Live "still working" indicator shown while a turn is in flight. Claude's
+// long tool calls (e.g. ssh) produce gaps with no output; this makes it clear
+// the session is busy, not hung. Mounts fresh each turn so the timer resets.
+function WorkingIndicator() {
+  const [tick, setTick] = useState(0);
+  const startRef = useRef(Date.now());
+  useEffect(() => {
+    const id = setInterval(() => setTick((t) => t + 1), 300);
+    return () => clearInterval(id);
+  }, []);
+  const frames = ['|', '/', '-', '\\'];
+  const dots = '.'.repeat(tick % 4);
+  const elapsed = Math.floor((Date.now() - startRef.current) / 1000);
+  return (
+    <View style={styles.workingRow}>
+      <Text style={styles.workingText}>{`${frames[tick % frames.length]} claude is working${dots}`}</Text>
+      <Text style={styles.workingMeta}>{`${elapsed}s · STOP to interrupt`}</Text>
     </View>
   );
 }
@@ -1622,4 +1665,17 @@ const styles = StyleSheet.create({
   },
   stopButtonText: { fontFamily: 'Courier New', fontSize: 11, color: '#ff0000' },
   disabled: { opacity: 0.4 },
+  workingRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    borderWidth: 1,
+    borderColor: '#665500',
+    backgroundColor: 'rgba(40, 30, 0, 0.35)',
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    marginBottom: 8,
+  },
+  workingText: { fontFamily: 'Courier New', fontSize: 12, color: '#ffcc33' },
+  workingMeta: { fontFamily: 'Courier New', fontSize: 10, color: '#998800' },
 });

@@ -365,16 +365,22 @@ export class AgentSession {
   }
 
   private handleClaudeEvent(event: any): void {
-    // Forward raw — the client's renderClaudeEvent understands the shapes.
+    if (event?.type === 'result') {
+      // Ignore a result for a turn that already ended — e.g. the dying process
+      // after a user stop — so we don't forward a spurious error line or emit a
+      // second session_end. Flip turnActive synchronously to make this idempotent.
+      if (!this.turnActive) return;
+      this.turnActive = false;
+      this.send({ type: 'claude_event', event });
+      void this.finishTurn(event);
+      return;
+    }
+    // Forward everything else verbatim — the client's renderClaudeEvent
+    // understands the shapes.
     this.send({ type: 'claude_event', event });
-
     if (event?.type === 'system' && event?.subtype === 'init' && event?.session_id) {
       this.currentSessionId = event.session_id;
       writeSession(this.dir, { lastSessionId: event.session_id, lastActivityAt: Date.now() });
-      return;
-    }
-    if (event?.type === 'result') {
-      void this.finishTurn(event);
     }
   }
 

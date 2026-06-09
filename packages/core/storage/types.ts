@@ -91,6 +91,10 @@ export interface StorageProvider {
   deleteApp(shareCode: string): Promise<void>;
   subscribeApps(cb: (apps: CustomApp[]) => void): () => void;
   subscribeApp(shareCode: string, cb: (app: CustomApp | null) => void): () => void;
+  // Force an immediate re-fetch of the shared apps list and dispatch it to all
+  // subscribers. Used right after an agent push so the dashboard reflects the
+  // new app without waiting on the realtime broadcast.
+  refreshApps(): Promise<void>;
 
   // User management — admin-only. RLS lets admins see all profiles; non-
   // admins get only their own row. deleteUser calls a SECURITY DEFINER

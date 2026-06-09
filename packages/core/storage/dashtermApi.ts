@@ -291,6 +291,10 @@ export class DashTermApiStorageProvider implements StorageProvider {
     }
   }
 
+  async refreshApps(): Promise<void> {
+    await this.fetchAndDispatchApps();
+  }
+
   subscribeApps(cb: (apps: CustomApp[]) => void): () => void {
     this.appsListeners.add(cb);
     void http<{ apps: CustomApp[] }>('GET', '/api/apps')
