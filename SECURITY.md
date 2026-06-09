@@ -17,8 +17,8 @@ on severity.
 
 ## What's in scope
 
-- The homehub bundle (`services/homehub/`) — Docker compose, schema,
-  Kong routing, the compile container.
+- `packages/server/` — the native gateway: auth, sqlite, the AI proxy,
+  and the esbuild compile endpoint.
 - `packages/core/` — the provider abstraction, AI services, vibe-coded
   app runtime.
 - `packages/web/` — the web bundle.
@@ -29,8 +29,8 @@ on severity.
 - The closed-source mobile app (lives in a private repo; report mobile
   issues via the App Store / support email if you bought it).
 - Anyone else's self-hosted deployment of this code.
-- Vulnerabilities in upstream Supabase / Kong / PostgreSQL — those
-  should be reported to the respective projects directly.
+- Vulnerabilities in upstream dependencies (Fastify, better-sqlite3, Expo,
+  etc.) — report those to the respective projects directly.
 
 ## Disclosure history
 

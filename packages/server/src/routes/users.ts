@@ -1,8 +1,7 @@
 /**
  * /api/users — admin-only user management.
  *
- * Non-admin GET returns just their own row (mirrors the Supabase-RLS
- * behaviour the dashboard already handles). Admin GET returns everyone.
+ * Non-admin GET returns just their own row; admin GET returns everyone.
  * DELETE is admin-only and refuses self-delete.
  */
 

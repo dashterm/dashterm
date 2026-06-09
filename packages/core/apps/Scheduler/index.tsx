@@ -231,7 +231,7 @@ export default function Scheduler({ appState, onUpdate, relatedWorkspaceNames }:
       <ScrollView style={styles.body} contentContainerStyle={styles.bodyContent}>
         {(() => {
           // Workspace switcher. Lists "related" workspaces (apps in the
-          // current Space) plus any workspaces the homehub has reported via
+          // current Space) plus any workspaces the relay has reported via
           // queue stats. 'Show all' lifts the filter to include every
           // workspace we've heard about. Switching reconnects automatically.
           const known = Array.from(new Set([

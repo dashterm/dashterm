@@ -2,7 +2,7 @@
  * /api/auth/* — sign-in, sign-out, current-user, change-password.
  *
  * Sign-up isn't here on purpose: account creation goes through the CLI
- * (`dashterm add-user`). Closed signup is part of the homehub model.
+ * (`dashterm add-user`). Closed signup is part of the self-host model.
  */
 
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';

@@ -2,7 +2,7 @@
  * Custom app handlers for the AIAssistant function-calling layer.
  *
  * Code creation + editing for vibe-coded apps now lives in the
- * AgenticCoder app (claude -p sessions on the homehub). The
+ * AgenticCoder app (claude -p sessions on the relay). The
  * server-side Gemini-driven /api/create-app-agent +
  * /api/edit-app-agent endpoints have been deleted; only delete and
  * per-app function dispatch survive here.

@@ -1,9 +1,9 @@
 /**
  * Provider interfaces — the seam between core code and the backend.
  *
- * The OSS build ships only a SupabaseProvider (./supabase.ts) backed by the
- * homehub bundle in services/homehub. Nothing in core/ outside ./supabase.ts
- * should import from `@supabase/*` directly.
+ * The OSS build ships one implementation: DashTermApiProvider
+ * (./dashtermApi.ts), which talks to the native gateway in packages/server
+ * over REST + a session cookie.
  *
  * Design notes:
  *
@@ -40,7 +40,7 @@ export interface AuthProvider {
   onAuthChange(cb: (user: AuthUser | null) => void): () => void;
   signOut(): Promise<void>;
 
-  // Bearer token for calling our own backend (homehub, /api/cli/*, etc).
+  // Bearer token for calling our own backend (/api/cli/*, etc).
   getIdToken(forceRefresh?: boolean): Promise<string | null>;
 
   // Sign in with a credential already obtained from the OAuth flow.
@@ -52,7 +52,7 @@ export interface AuthProvider {
   signInWithGooglePopup(scopes: string[]): Promise<SignInResult>;
 
   // Email + password — the default first-login path. Signup is operator-
-  // mediated (`dashterm homehub add-user`), so there's no signUp method here.
+  // mediated (`dashterm add-user`), so there's no signUp method here.
   signInWithPassword(email: string, password: string): Promise<SignInResult>;
 
   // Change the signed-in user's password. Used by the force-reset screen
@@ -79,8 +79,8 @@ export interface UserSummary {
 }
 
 export interface StorageProvider {
-  // Per-user blob (profile + appState). Phase 3 Supabase impl will split
-  // these into two tables internally but keep this API.
+  // Per-user blob (profile + appState). The gateway stores this as a single
+  // JSON document per user; this API stays stable regardless.
   getUserData(uid: string): Promise<UserData | null>;
   setUserData(uid: string, data: UserData): Promise<void>;
   subscribeUserData(uid: string, cb: (data: UserData | null) => void): () => void;

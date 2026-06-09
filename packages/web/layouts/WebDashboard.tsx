@@ -312,7 +312,7 @@ export default function WebDashboard({
     setNewSpaceName("");
   };
 
-  // Per-user homehub API base for vibe-coded apps. Sourced from the user's
+  // Per-user relay API base for vibe-coded apps. Sourced from the user's
   // AgenticCoder relay URL in the user-state blob — no env vars, no hardcoding.
   const apiBase = relayUrlToApiBase(state.overlays?.agenticCoder?.relayUrl);
 

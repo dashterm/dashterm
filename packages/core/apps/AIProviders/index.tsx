@@ -1,5 +1,5 @@
 /**
- * AI Providers — manage the AI backends the homehub can route to.
+ * AI Providers — manage the AI backends the gateway can route to.
  *
  * Lives as a tile in the reserved Settings space. Reads /api/ai/providers
  * (shared with AIAssistant's settings) and, for admins, drives the provider

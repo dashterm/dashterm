@@ -16,7 +16,7 @@ export function buildSystemPrompt(context: SystemContext): string {
   const customAppCount = Object.keys(context.customApps || {}).length;
   const spaceCount = (context.spaces || []).length;
 
-  return `You are an AI assistant in a vibe-coding homehub. Your main job is to help the user create, edit, and reason about custom apps that live in their workspace.
+  return `You are an AI assistant in a vibe-coding dashboard. Your main job is to help the user create, edit, and reason about custom apps that live in their workspace.
 
 Current user context:
 - Custom apps created: ${customAppCount}

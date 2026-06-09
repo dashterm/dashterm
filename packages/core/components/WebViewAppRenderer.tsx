@@ -3,10 +3,10 @@ import { View, Text, StyleSheet, ActivityIndicator } from 'react-native';
 import { WebView, WebViewMessageEvent } from 'react-native-webview';
 import { CustomApp, UserProfile } from '../types';
 
-// Compile through the gateway. Native installs serve the bundle and the
+// Compile through the gateway. The native install serves the bundle and the
 // API from the same origin (EXPO_PUBLIC_GATEWAY_URL stays empty for
-// relative URLs). The legacy Docker / Supabase path keeps
-// EXPO_PUBLIC_COMPILE_URL as an override.
+// relative URLs). EXPO_PUBLIC_COMPILE_URL stays an optional override for
+// setups that front the gateway behind a different origin.
 const COMPILE_SERVER_URL =
   process.env.EXPO_PUBLIC_GATEWAY_URL ??
   process.env.EXPO_PUBLIC_COMPILE_URL ??
@@ -18,7 +18,7 @@ interface WebViewAppRendererProps {
   instanceState: any;
   updateState: (updates: any) => void;
   userProfile: UserProfile | null;
-  // Per-user homehub API base (derived from AgenticCoder's relayUrl). Empty
+  // Per-user relay API base (derived from AgenticCoder's relayUrl). Empty
   // string means the user hasn't configured a relay yet — the renderer will
   // surface a helpful message instead of letting custom apps fail mysteriously.
   apiBase: string;

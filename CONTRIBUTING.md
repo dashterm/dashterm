@@ -9,27 +9,24 @@ both our lives easier.
 ```bash
 git clone <your-fork>
 cd dashterm
-npm install
-cd services/compile-server && npm install && cd ../..
-cd cli && npm install && npm run build && cd ..
+npm install          # postinstall builds packages/server + the CLI
 
-# stand up the full backend bundle
-node cli/dist/index.js homehub init
-node cli/dist/index.js homehub up
-
-# then in another terminal
-npx expo start --web
+# run the gateway + Expo dev server together, with hot reload
+npm run dev
 ```
 
-The `dashterm homehub up` flow brings up Postgres + Supabase Auth +
-Realtime + Storage + Kong + the compile server + the web bundle, applies
-migrations, and prints the URLs. See [services/homehub/README.md](./services/homehub/README.md)
-for the detailed install + troubleshooting guide.
+`npm run dev` starts the native gateway (`packages/server`) on :8765 and the
+Expo web dev server on :8081 — open http://localhost:8081. On first boot the
+gateway seeds a default admin (`admin@localhost` / `changeme`) and forces you
+to rotate it. Compilation of vibe-coded apps lives in
+`packages/server/src/compilation` and is served at `POST /api/compile` by the
+same gateway.
 
 ## Filing issues
 
-- **Bug reports**: include OS, Docker version, `docker compose version`,
-  the failing command, and any logs from `dashterm homehub logs`.
+- **Bug reports**: include OS, Node version (`node -v`), the failing
+  command, and any gateway logs (`dashterm daemon logs`, or the stderr from
+  `dashterm start`).
 - **Feature requests**: be honest about whether it's something you'd
   actually use yourself — the project is small and we're trying not to
   grow scope into "another all-things-to-everyone framework."
@@ -40,10 +37,10 @@ for the detailed install + troubleshooting guide.
 1. Fork and branch off `main`.
 2. Make your change. Run `npm run typecheck` at the repo root before
    committing.
-3. If you touched `services/homehub/migrations/`, manually verify that
-   `dashterm homehub up` on a fresh `docker compose down -v` brings the
-   stack up clean. Migrations are the most consequential part of the
-   schema; we keep them idempotent.
+3. If you touched `packages/server/src/migrations/`, verify a fresh
+   `dashterm start` against an empty data dir applies them clean
+   (`DASHTERM_DATA_DIR=$(mktemp -d) dashterm start`). Migrations are the
+   most consequential part of the schema; we keep them idempotent.
 4. Open a PR. The CI runs typecheck + lint.
 5. **The CLA bot will ask you to sign the CLA on your first PR.** This is
    a one-click thing via comment ("I have read the CLA Document and I
@@ -81,6 +78,6 @@ TL;DR: be decent.
 - Hosted-tier infrastructure. This is a self-host-first project. If you
   want a managed-hosting feature, please open an issue to discuss first —
   we may say no.
-- Migrations away from Supabase to a different backend. The
-  StorageProvider/AuthProvider interface exists so this is *possible*, but
-  we don't intend to ship alternate implementations in this repo.
+- Alternate storage/auth backends. The StorageProvider/AuthProvider
+  interface exists so this is *possible*, but the native sqlite gateway is
+  the only implementation we ship in this repo.

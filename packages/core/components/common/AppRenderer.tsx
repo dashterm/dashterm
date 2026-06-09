@@ -46,7 +46,7 @@ export interface AppRendererProps {
   updateCustomAppState?: (appId: string, updates: any) => void;
   // Selected date from space's date picker (YYYY-MM-DD format)
   selectedDate?: string;
-  // Per-user homehub API base for vibe-coded custom apps (derived from
+  // Per-user relay API base for vibe-coded custom apps (derived from
   // AgenticCoder's relayUrl). Empty when the user hasn't configured a relay.
   apiBase: string;
 }

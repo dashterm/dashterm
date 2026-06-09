@@ -11,29 +11,24 @@
 #      (override with DASHTERM_INSTALL_DIR=/path)
 #   4. runs `npm install` — postinstall builds the server + CLI
 #   5. puts `dashterm` on PATH (npm link, or ~/.local/bin fallback)
-#   6. runs `dashterm onboard` — interactive prompt for the admin email +
-#      password (creates the account in ~/.dashterm/state.db).
+#   6. (optional) runs `dashterm onboard` only if you pass DASHTERM_EMAIL +
+#      DASHTERM_PASSWORD; otherwise the gateway seeds a default admin
+#      (admin@localhost / changeme, force-reset) on its first start.
 #
 # After install, run:
 #   $ dashterm start
-# to launch the gateway (foreground; Ctrl-C to stop). Or for autostart on
-# login, install the daemon:
+# to launch the gateway (foreground; Ctrl-C to stop), then open
+# http://localhost:8765 and sign in. Or for autostart on login:
 #   $ dashterm daemon install
-# (or pass DASHTERM_INSTALL_DAEMON=1 to the curl one-liner above to do
-#  this automatically as part of onboarding).
-#
-# For users who want the Docker stack (Supabase backend) instead, after
-# install run:
-#   $ dashterm homehub init && dashterm homehub up
+# (or pass DASHTERM_INSTALL_DAEMON=1 to the curl one-liner above).
 #
 # Env knobs:
 #   DASHTERM_INSTALL_DIR     where to clone (default: ~/.dashterm/src)
 #   DASHTERM_REPO_URL        git url to clone from
 #   DASHTERM_BRANCH          branch / tag / commit (default: main)
-#   DASHTERM_NO_ONBOARD=1    skip the onboarding prompt (run later yourself)
-#   DASHTERM_EMAIL           non-interactive onboard: admin email
-#   DASHTERM_PASSWORD        non-interactive onboard: admin password
-#   DASHTERM_INSTALL_DAEMON  1 → onboarding also installs the autostart unit
+#   DASHTERM_EMAIL           create this admin instead of the seeded default
+#   DASHTERM_PASSWORD        password for DASHTERM_EMAIL (set both together)
+#   DASHTERM_INSTALL_DAEMON  1 → also install the autostart unit
 #                             (launchd plist on macOS, systemd-user on Linux)
 
 set -euo pipefail
@@ -146,7 +141,6 @@ npm install --no-audit --no-fund
 ok "Deps installed; server at packages/server/dist/, CLI at cli/dist/"
 
 # -- 4b. build the web bundle the gateway will serve ------------------------
-# EXPO_PUBLIC_BACKEND=dashterm-native bakes in the native API client.
 # EXPO_PUBLIC_GATEWAY_URL is intentionally empty so the bundle uses
 # relative URLs — the gateway serves both the bundle and the API from the
 # same origin, so '' + '/api/...' resolves correctly in any browser.
@@ -156,7 +150,7 @@ if [ "${DASHTERM_NO_WEB_BUILD:-}" = "1" ]; then
   note "  --platform web --output-dir web-dist\` from $INSTALL_DIR later."
 else
   say "Building web bundle (a couple of minutes on first run)…"
-  EXPO_PUBLIC_BACKEND=dashterm-native EXPO_PUBLIC_GATEWAY_URL= \
+  EXPO_PUBLIC_GATEWAY_URL= \
     npx expo export --platform web --output-dir web-dist
   ok "Web bundle at $INSTALL_DIR/web-dist/"
 fi
@@ -189,28 +183,21 @@ else
   DASHTERM_BIN="$INSTALL_DIR/cli/dist/index.js"
 fi
 
-# -- 6. onboarding ----------------------------------------------------------
-# Build the onboard arg vector incrementally instead of indirecting through a
-# possibly-empty array — bash `set -u` errors on "${ARR[@]}" expansion when
-# the array has zero elements. The order doesn't matter to the CLI flag
-# parser; we just need every flag the user asked for to land.
-ONBOARD_ARGS=(onboard)
+# -- 6. admin account -------------------------------------------------------
+# The gateway seeds a default admin (admin@localhost / changeme, force-reset)
+# on its first start, so onboarding is optional. We only run `dashterm
+# onboard` when the operator supplied explicit credentials; the autostart
+# unit can still be installed on its own.
 if [ -n "${DASHTERM_EMAIL:-}" ] && [ -n "${DASHTERM_PASSWORD:-}" ]; then
-  ONBOARD_ARGS+=(--email "$DASHTERM_EMAIL" --password "$DASHTERM_PASSWORD")
-fi
-if [ "${DASHTERM_INSTALL_DAEMON:-}" = "1" ]; then
-  ONBOARD_ARGS+=(--install-daemon)
-fi
-
-if [ "${DASHTERM_NO_ONBOARD:-}" = "1" ]; then
-  warn "Skipping onboarding (DASHTERM_NO_ONBOARD=1)."
-  note "Run \`dashterm onboard\` later to create the admin account."
-elif [ -n "${DASHTERM_EMAIL:-}" ] && [ -n "${DASHTERM_PASSWORD:-}" ]; then
-  say "Onboarding non-interactively…"
+  say "Creating admin ${DASHTERM_EMAIL}…"
+  ONBOARD_ARGS=(onboard --email "$DASHTERM_EMAIL" --password "$DASHTERM_PASSWORD")
+  if [ "${DASHTERM_INSTALL_DAEMON:-}" = "1" ]; then
+    ONBOARD_ARGS+=(--install-daemon)
+  fi
   "$DASHTERM_BIN" "${ONBOARD_ARGS[@]}"
-else
-  echo
-  "$DASHTERM_BIN" "${ONBOARD_ARGS[@]}"
+elif [ "${DASHTERM_INSTALL_DAEMON:-}" = "1" ]; then
+  say "Installing autostart unit…"
+  "$DASHTERM_BIN" daemon install
 fi
 
 # -- 7. final summary ------------------------------------------------------
@@ -225,6 +212,8 @@ note "Next step:"
 note "  \$ dashterm start"
 note ""
 note "Then open http://localhost:8765 in a browser and sign in."
-note ""
-note "Docker users — \`dashterm homehub init && dashterm homehub up\` brings"
-note "up the alternate Supabase stack instead."
+if [ -z "${DASHTERM_EMAIL:-}" ]; then
+  note ""
+  note "Default admin (seeded on first start): admin@localhost / changeme"
+  warn "Rotate that password on first login, before exposing to a network."
+fi

@@ -565,7 +565,7 @@ if (typeof document !== 'undefined' && !document.getElementById('rn-shim-styles'
 }
 
 // ============ DASHTERM (secrets + AI) ============
-// The bridge to homehub services available to every custom app.
+// The bridge to gateway services available to every custom app.
 //   dashterm.secrets.fetch(url, opts)  — call a 3rd-party API using a stored
 //       secret WITHOUT seeing its value: put {{secret.NAME}} in url/headers/body
 //       and the gateway substitutes it server-side. Resolves to

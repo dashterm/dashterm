@@ -7,7 +7,7 @@
     "start": "expo start --web",
     "web": "expo start --web",
     "gateway:dev": "cd packages/server && DASHTERM_DATA_DIR=../../.dashterm-dev-data DASHTERM_DEV_CORS_ORIGIN=http://localhost:8081 npm run dev",
-    "web:dev": "EXPO_PUBLIC_BACKEND=dashterm-native EXPO_PUBLIC_GATEWAY_URL=http://localhost:8765 expo start --web --port 8081 --clear",
+    "web:dev": "EXPO_PUBLIC_GATEWAY_URL=http://localhost:8765 expo start --web --port 8081 --clear",
     "dev": "concurrently -k -n gateway,web -c blue,green \"npm run gateway:dev\" \"npm run web:dev\"",
     "dashterm": "node cli/dist/index.js",
     "test": "playwright test",
@@ -19,7 +19,6 @@
   },
   "dependencies": {
     "@react-native-async-storage/async-storage": "2.2.0",
-    "@supabase/supabase-js": "^2.80.0",
     "babel-preset-expo": "^54.0.7",
     "expo": "~54.0.34",
     "expo-auth-session": "~7.0.11",

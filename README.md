@@ -22,8 +22,6 @@ That script:
    `~/.local/bin/`).
 5. Builds the web bundle (`expo export --platform web`) so the gateway
    can serve it.
-6. `dashterm onboard` — interactive prompt to create the admin
-   account.
 
 After that:
 
@@ -33,7 +31,13 @@ dashterm start          # foreground gateway
 dashterm daemon install # autostart on every login (launchd / systemd)
 ```
 
-Then open **http://localhost:8765**.
+Then open **http://localhost:8765** and sign in with the admin the gateway
+seeds on its first start — **`admin@localhost` / `changeme`** — which forces
+you to set a real password immediately. (Prefer your own admin up front? Run
+`dashterm onboard` before the first `dashterm start`.)
+
+> ⚠ Rotate the seeded password on first login, **before** exposing the
+> gateway to a network.
 
 To get the autostart + onboarding in one command:
 
@@ -48,8 +52,7 @@ curl -fsSL https://website-mf.web.app/install.sh \
 git clone https://github.com/dashterm/dashterm.git
 cd dashterm
 npm install
-dashterm onboard
-dashterm start
+dashterm start          # seeds admin@localhost / changeme on first boot
 ```
 
 A single `npm install` at the root is enough — the postinstall hook
@@ -81,14 +84,12 @@ Not for you if:
 - `packages/core/` — registry, AIAssistant, plugin system, vibe-coded
   app runtime, and the storage/auth provider seam.
 - `cli/` — `dashterm start / onboard / daemon / provider / users /
-  homehub / doctor`.
-- `services/homehub/` — *optional* Docker / Supabase install bundle for
-  users who want hosted-style scaling instead of the native sqlite path.
+  doctor`.
 
 ## The paid mobile app
 
 The native iOS / Android shell is a separate closed-source app, sold
-to fund development. It's a thin client that points at *your* homehub
+to fund development. It's a thin client that points at *your* gateway
 URL — same provider seam, no telemetry, no data on a third party. The
 funding model lives there so the OSS half can stay self-host-first.
 
@@ -128,20 +129,6 @@ dashterm daemon install
 dashterm daemon status
 dashterm daemon logs -f
 ```
-
-## Optional Docker / Supabase install
-
-If you'd rather run the dashboard backed by Postgres + Supabase Auth +
-Realtime + Storage in containers, that path is still here:
-
-```bash
-dashterm homehub init
-dashterm homehub up
-# then open http://localhost:8082
-```
-
-See [`services/homehub/README.md`](./services/homehub/README.md) for
-the full install + upgrade + backup + troubleshooting guide.
 
 ## License
 

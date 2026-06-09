@@ -3,7 +3,7 @@ import { startCommand } from './commands/gateway';
 import { onboardCommand } from './commands/onboard';
 import { daemonCommand } from './commands/daemon';
 import { providerCommand } from './commands/provider';
-import { homehubCommand } from './commands/homehub';
+import { backupCommand, restoreCommand } from './commands/backup';
 import {
   addUserCommand,
   deleteUserCommand,
@@ -26,6 +26,8 @@ function help(): number {
   info('  list-users                     list users in the local sqlite');
   info('  delete-user <email>            delete a user');
   info('  set-admin <email> <true|false> toggle is_admin flag');
+  info('  backup [dest]                  snapshot the sqlite db (safe while running)');
+  info('  restore <backup.db>            overwrite the db from a snapshot (stop gateway)');
   info('  daemon install                 install launchd/systemd autostart unit');
   info('  daemon uninstall               remove the autostart unit');
   info('  daemon status                  print whether the daemon is running');
@@ -40,15 +42,6 @@ function help(): number {
   info('  provider bind APP_ID NAME      route an app to a specific provider');
   info('  provider unbind APP_ID         drop the binding');
   info('  provider binding [APP_ID]      see which provider resolves for an app');
-  info('');
-  info(c.bold('Homehub (optional Supabase Docker bundle):'));
-  info('  homehub init                   write .env with fresh secrets');
-  info('  homehub up [--dev]             docker compose up -d (--dev brings up Studio)');
-  info('  homehub down                   docker compose down (volumes persist)');
-  info('  homehub logs [SERVICE...]      tail logs');
-  info('  homehub status                 docker compose ps');
-  info('  homehub migrate                apply any unrun SQL migrations');
-  info('  homehub add-user EMAIL [pw]    invite a user to the homehub install');
   info('');
   return 0;
 }
@@ -75,12 +68,14 @@ async function main(): Promise<number> {
       return deleteUserCommand(rest);
     case 'set-admin':
       return setAdminCommand(rest);
+    case 'backup':
+      return backupCommand(rest);
+    case 'restore':
+      return restoreCommand(rest);
     case 'daemon':
       return daemonCommand(rest);
     case 'provider':
       return providerCommand(rest);
-    case 'homehub':
-      return homehubCommand(rest);
     default:
       error(`Unknown command: ${raw}`);
       help();

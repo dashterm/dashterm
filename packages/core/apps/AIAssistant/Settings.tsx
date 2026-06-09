@@ -102,7 +102,7 @@ export default function AIAssistantSettings({ onClose }: AppSettingsContext) {
 
       <Text style={styles.help}>
         Pick the AI backend that answers chat in this app. Configure providers
-        on the homehub host with <Text style={styles.code}>$ dashterm provider add</Text>.
+        on the server with <Text style={styles.code}>$ dashterm provider add</Text>.
       </Text>
 
       {err && (

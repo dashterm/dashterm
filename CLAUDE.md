@@ -5,9 +5,6 @@ gateway. Argon2id passwords, JWT cookies, WebSocket push for cross-tab sync,
 and a multi-provider AI proxy (Claude / GPT / Gemini / Ollama). Terminal /
 Matrix aesthetic. Web: Spaces-based grid with drag-and-drop.
 
-The optional Docker / Supabase install bundle (`dashterm homehub up`) lives
-under `services/homehub/` for users who want hosted-style scaling.
-
 ## Commands
 - Boot the gateway + Expo dev server: `npm run dev`
 - Build the web bundle: `npx expo export --platform web --output-dir web-dist`
@@ -30,31 +27,27 @@ packages/
 │   ├── apps/           # AIAssistant, AgenticCoder, Scheduler, UserManagement
 │   ├── components/     # AppRenderer, LoginPage, PasswordResetScreen, …
 │   ├── hooks/          # useAuth, useRealtimeStateWithAuth, useSharedApps
-│   ├── storage/        # DashTermApi + Supabase providers behind a switcher
+│   ├── storage/        # DashTermApiProvider — talks to the native gateway
 │   └── services/ai/    # AIAssistant chat orchestrator → /api/ai/chat proxy
 └── web/                # Expo web entry: App.tsx + WebDashboard layout
 
 cli/
 └── src/                # Node CLI — start / onboard / daemon / provider /
-                        # users / homehub / doctor
-
-services/
-└── homehub/            # Optional Docker Supabase bundle (dashterm homehub up)
+                        # users / doctor
 
 scripts/install.sh      # Curl-installer
 ```
 
 ## Styling
-**See `customAppGuidelines.ts` for complete terminal aesthetic guide** including colors, typography, boot sequences, panel patterns, and settings UI.
-
-Quick reference:
+The terminal aesthetic — colors, typography, boot sequences, panel patterns,
+and settings UI. Quick reference:
 - Colors: #00ffff (cyan), #00ff00 (green), #ff0000 (red), #ffff00 (yellow), #0a0a0a (bg)
 - Font: 'Courier New' monospace only
 - NO internal headers - window container provides title
 
 ## Adding a New App
 
-### Step 1: Create Component (`src/apps/[AppName]/index.tsx`)
+### Step 1: Create Component (`packages/core/apps/[AppName]/index.tsx`)
 ```typescript
 import React from 'react';
 import { View, Text, StyleSheet, ScrollView } from 'react-native';
@@ -82,7 +75,7 @@ const styles = StyleSheet.create({
 });
 ```
 
-### Step 2: Create Plugin (`src/apps/[AppName]/plugin.ts`)
+### Step 2: Create Plugin (`packages/core/apps/[AppName]/plugin.ts`)
 ```typescript
 import { AppDefinition, AppComponentProps, AppContext } from '../../registry/types';
 import MyApp from './index';
@@ -101,23 +94,17 @@ export const myAppPlugin: AppDefinition = {
 };
 ```
 
-### Step 3: Register (`src/apps/index.ts`)
+### Step 3: Register (`packages/core/apps/index.ts`)
 ```typescript
 import { myAppPlugin } from './MyApp/plugin';
 registerApp(myAppPlugin);
 ```
+That's the only wiring needed to render it. The shared `AppRenderer`
+(`packages/core/components/common/AppRenderer.tsx`, used by
+`packages/web/layouts/WebDashboard.tsx`) looks each tile up in the registry by
+`type` — there is no per-app switch to edit.
 
-### Step 4: Add to WebDashboard (`src/components/layouts/WebDashboard.tsx`)
-```typescript
-// Add import
-import MyApp from "../../apps/MyApp";
-
-// Add to renderAppContent() switch
-case "myapp":
-  return <MyApp appState={instanceState} onUpdate={updateInstance} />;
-```
-
-### Step 5: Add default state (`src/hooks/useRealtimeStateWithAuth.ts`)
+### Step 4: Add default state (`packages/core/hooks/state/defaultAppStates.ts`)
 ```typescript
 // In getDefaultStateForAppType()
 case 'myapp': return { items: [] };
@@ -133,7 +120,8 @@ settings: {
 }
 ```
 
-See `customAppGuidelines.ts` for settings UI patterns and styles.
+Mirror an existing app's settings component (e.g.
+`packages/core/apps/AgenticCoder/Settings.tsx`) for UI patterns and styles.
 
 ## Key Interfaces
 
@@ -221,11 +209,11 @@ queryableData: [{
 ### Required Updates for AI State Access
 When adding AI functions, update these files or functions receive empty state `{}`:
 
-1. **`src/services/ai/appStateHelpers.ts`** - Add to `getAppStateFromContext()` and `updateAppState()`
-2. **`src/apps/AIAssistant/index.tsx`** - Add to `appActions` prop type
-3. **`src/types/index.ts`** - Add to `SystemContext` interface
-4. **`src/components/navigation/MultiAppContainer.tsx`** - Add to `systemContext` and `appActions`
-5. **`src/components/layouts/WebDashboard.tsx`** - Add to AIAssistant's `systemContext` and `appActions`
+1. **`packages/core/services/ai/appStateHelpers.ts`** - Add to `getAppStateFromContext()` and `updateAppState()`
+2. **`packages/core/apps/AIAssistant/index.tsx`** - Add to `appActions` prop type
+3. **`packages/core/types/index.ts`** - Add to `SystemContext` interface
+4. **`packages/core/components/common/AppRenderer.tsx`** - Add to `systemContext` and `appActions`
+5. **`packages/web/layouts/WebDashboard.tsx`** - Add to AIAssistant's `systemContext` and `appActions`
 
 ## Database Structure
 ```
@@ -276,8 +264,8 @@ distinct compile/render path from registered apps.
    crashing the compile with "View has already been declared".
 3. **esbuild** compiles TSX → IIFE JS (`format: 'iife'`, `bundle: false`,
    `globalName: 'CustomAppModule'`), targeting es2018.
-4. Result stored at `apps/{shareCode}.compiledCode` (sqlite on the native
-   install; `apps` collection on the Supabase Docker install).
+4. Result stored at `apps/{shareCode}.compiledCode` (the `apps` table in
+   the gateway's sqlite).
 
 ### Shim (`packages/server/src/compilation/reactNativeShims.ts`)
 - Inline 500-line template literal injected before user code at compile time.
@@ -289,27 +277,24 @@ distinct compile/render path from registered apps.
   the shim won't be defined at runtime.
 
 ### Render path
-- **Web** (`src/components/DynamicAppRenderer.tsx`): `new Function(...)` evals
-  `compiledCode` in the page's JS context. Fast, direct.
-- **Mobile** (`src/components/WebViewAppRenderer.tsx`): renders inside a
-  `react-native-webview` because **Hermes blocks `new Function`/`eval`**.
+- **Web** (`packages/core/components/DynamicAppRenderer.tsx`): `new Function(...)`
+  evals `compiledCode` in the page's JS context. Fast, direct.
+- **Mobile** (`packages/core/components/WebViewAppRenderer.tsx`): renders inside
+  a `react-native-webview` because **Hermes blocks `new Function`/`eval`**.
   The WebView loads React from a CDN, injects `compiledCode`, and bridges
-  state + events back to RN via `postMessage`.
+  state + events back to RN via `postMessage`. (The mobile shell lives in a
+  separate repo; this renderer is the web-side contract for it.)
 - **Compile endpoint:** lives on the gateway at `POST /api/compile`
-  (same origin as everything else — relative URLs work). Native install:
-  http://localhost:8765/api/compile. Docker / Supabase install: still uses
-  the separate compile container, point at it via EXPO_PUBLIC_COMPILE_URL.
+  (same origin as everything else — relative URLs work), e.g.
+  http://localhost:8765/api/compile.
 
 ### Custom-app discovery flow
 1. User pushes app from AgenticCoder → gateway upserts into the `apps` table at share-code (ownerId=user)
 2. `useRealtimeStateWithAuth.ts` listener auto-loads owned apps into
    `state.customApps` (no manual add).
-3. To put a tile in a Space:
-   - Web: ⌘K → CommandPalette
-   - Mobile: `[+]` button in MultiAppContainer title bar / empty state →
-     CommandPalette (which receives `customApps` + `onDeleteCustomApp` props)
-4. `MultiAppContainer.tsx` routes `state.customApps[id]` to
-   `WebViewAppRenderer`; `WebDashboard.tsx` uses `DynamicAppRenderer`.
+3. To put a tile in a Space, open the CommandPalette (⌘K on web).
+4. `WebDashboard.tsx` routes `state.customApps[id]` through `AppRenderer`,
+   which renders it with `DynamicAppRenderer`.
 
 ## AI Details
 - The gateway hosts a multi-provider proxy at `POST /api/ai/chat` (OpenAI-

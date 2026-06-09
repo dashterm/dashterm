@@ -7,7 +7,7 @@ interface DynamicAppRendererProps {
   appState: any;
   onUpdateState: (updates: any) => void;
   userProfile: UserProfile | null;
-  // Per-user homehub API base (derived from AgenticCoder's relayUrl). Empty
+  // Per-user gateway API base (derived from AgenticCoder's relayUrl). Empty
   // string means no relay configured yet — surfaced as a helpful message
   // rather than a "DASHTERM_API_BASE not set" failure inside each app.
   apiBase: string;
@@ -112,11 +112,10 @@ export default class DynamicAppRenderer extends Component<
     try {
       console.log('🔧 Compiling custom app:', customApp.name);
 
-      // Compile through the gateway: native installs serve the bundle and
-      // the API from the same origin, so '' + '/api/compile' resolves
-      // correctly. The Supabase / Docker path keeps EXPO_PUBLIC_COMPILE_URL
-      // as an opt-in override (the docker bundle still ships a separate
-      // compile service).
+      // Compile through the gateway: the native install serves the bundle
+      // and the API from the same origin, so '' + '/api/compile' resolves
+      // correctly. EXPO_PUBLIC_COMPILE_URL stays an optional override for
+      // setups that front the gateway behind a different origin.
       const base =
         process.env.EXPO_PUBLIC_GATEWAY_URL ??
         process.env.EXPO_PUBLIC_COMPILE_URL ??
@@ -161,7 +160,7 @@ export default class DynamicAppRenderer extends Component<
       // Ensure React is available on window for compiled code
       if (typeof window !== 'undefined') {
         (window as any).React = React;
-        // Per-user homehub URL — set fresh on every render so a user changing
+        // Per-user relay URL — set fresh on every render so a user changing
         // their relay in AgenticCoder takes effect on next compile without a
         // page reload.
         (window as any).DASHTERM_API_BASE = this.props.apiBase;

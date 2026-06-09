@@ -1,11 +1,10 @@
 /**
  * /api/apps — vibe-coded custom apps stored in the shared `apps` table.
  *
- * For v0 every signed-in user can read every app (matches the
- * Supabase-side behaviour where the apps collection is share-code-keyed).
- * Writes require ownership; admins can write anything.
+ * For v0 every signed-in user can read every app (the apps collection is
+ * share-code-keyed). Writes require ownership; admins can write anything.
  *
- * The dashboard expects the same shape as the Supabase StorageProvider:
+ * The dashboard expects the StorageProvider's app shape:
  *   { id, name, description, code, compiledCode, functions, queryableData,
  *     ownerId, ownerName, visibility, createdAt, updatedAt, version, category }
  */

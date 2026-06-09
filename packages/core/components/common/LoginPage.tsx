@@ -95,7 +95,7 @@ export default function LoginPage() {
           // YOU'LL BE PROMPTED TO ROTATE THE PASSWORD
         </Text>
         <Text style={[styles.helpText, { marginTop: 8 }]}>
-          // NO ACCOUNT? ASK YOUR OPERATOR TO RUN `dashterm homehub add-user`
+          // NO ACCOUNT? ASK YOUR OPERATOR TO RUN `dashterm add-user`
         </Text>
       </TerminalPanel>
 

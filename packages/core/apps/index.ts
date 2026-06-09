@@ -2,7 +2,7 @@
  * The ship-with-the-app plugin registry.
  *
  * After Phase 2 the native registered apps shipped in the bundle are limited
- * to the homehub primitives: the AI assistant (the vibe-coding driver) plus
+ * to the core primitives: the AI assistant (the vibe-coding driver) plus
  * the two server-coupled overlays (AgenticCoder, Scheduler). Everything else
  * users want lives as a vibe-coded app in the apps/{shareCode} collection.
  *

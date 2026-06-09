@@ -1,13 +1,12 @@
 /**
  * User Management — admin-only app for listing and deleting user accounts.
  *
- * RLS gates the data: a non-admin user sees only their own row in
- * profiles. Admins see everyone. Delete goes through the
- * `admin_delete_user` SECURITY DEFINER RPC which double-checks the caller
+ * The gateway gates the data: GET /api/users returns everyone for an admin
+ * and just the caller otherwise; DELETE /api/users/:id re-checks the caller
  * is admin and refuses self-delete.
  *
- * To add users, run `dashterm homehub add-user <email> [password]` on the
- * homehub host. (No invite-link UI in v0.)
+ * To add users, run `dashterm add-user <email> [password]` on the server.
+ * (No invite-link UI in v0.)
  */
 
 import React, { useEffect, useState, useCallback } from 'react';
@@ -76,8 +75,8 @@ export default function UserManagement(_props: Props) {
       </View>
 
       <Text style={styles.help}>
-        To add a user, run on the homehub host:{'\n'}
-        <Text style={styles.code}>$ dashterm homehub add-user alice@family.lan</Text>
+        To add a user, run on the server:{'\n'}
+        <Text style={styles.code}>$ dashterm add-user alice@family.lan</Text>
       </Text>
 
       {err && (
@@ -89,7 +88,7 @@ export default function UserManagement(_props: Props) {
       {users === null ? (
         <Text style={styles.muted}>LOADING…</Text>
       ) : users.length === 0 ? (
-        <Text style={styles.muted}>(no users — RLS may be hiding them; only admins see this list)</Text>
+        <Text style={styles.muted}>(no users — only admins can see this list)</Text>
       ) : (
         users.map((u) => {
           const isSelf = user?.uid === u.id;

@@ -10,7 +10,7 @@ import Fastify, { type FastifyInstance } from 'fastify';
 import fs from 'fs';
 import path from 'path';
 import { type GatewayConfig, loadConfig } from './config';
-import { openDb } from './db';
+import { openDb, seedDefaultAdminIfEmpty } from './db';
 import { registerAuthRoutes } from './routes/auth';
 import { registerStateRoutes } from './routes/state';
 import { registerUserRoutes } from './routes/users';
@@ -30,7 +30,8 @@ export async function createServer(
   overrides: Partial<GatewayConfig> = {},
 ): Promise<StartedGateway> {
   const config = loadConfig(overrides);
-  openDb(config.dataDir);
+  const db = openDb(config.dataDir);
+  await seedDefaultAdminIfEmpty(db);
 
   const app = Fastify({
     logger: {

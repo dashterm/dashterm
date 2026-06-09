@@ -8,8 +8,10 @@
  */
 
 import Database from 'better-sqlite3';
+import { randomUUID } from 'crypto';
 import fs from 'fs';
 import path from 'path';
+import { hashPassword } from './auth';
 
 let _db: Database.Database | null = null;
 let _dbPath: string | null = null;
@@ -88,4 +90,35 @@ function runMigrations(db: Database.Database): void {
     tx();
     console.log(`[db] applied ${file}`);
   }
+}
+
+// First-boot convenience. If the users table is empty, seed a default admin
+// so a fresh `dashterm start` (or `npm run dev`) is immediately usable with no
+// separate onboarding step. The account is flagged must_reset_password, so the
+// dashboard forces a real password on first login (and auth.ts refuses to let
+// the replacement be "changeme").
+//
+// Operators who'd rather create their own admin up front can run
+// `dashterm onboard` before the first start — that inserts a user, so this
+// no-ops.
+//
+// SECURITY: admin@localhost / changeme is a KNOWN default credential. Log in
+// and rotate it before exposing the gateway to a network.
+const DEFAULT_ADMIN_EMAIL = 'admin@localhost';
+const DEFAULT_ADMIN_PASSWORD = 'changeme';
+
+export async function seedDefaultAdminIfEmpty(db: Database.Database): Promise<boolean> {
+  const row = db.prepare('select count(*) as n from users').get() as { n: number };
+  if (row.n > 0) return false;
+  const hash = await hashPassword(DEFAULT_ADMIN_PASSWORD);
+  const now = Date.now();
+  db.prepare(
+    `insert into users (id, email, password_hash, display_name, is_admin, must_reset_password, metadata, created_at, last_active)
+       values (?, ?, ?, ?, 1, 1, '{}', ?, ?)`,
+  ).run(randomUUID(), DEFAULT_ADMIN_EMAIL, hash, 'admin', now, now);
+  console.warn(
+    `[db] seeded default admin ${DEFAULT_ADMIN_EMAIL} / ${DEFAULT_ADMIN_PASSWORD} ` +
+      '(flagged must-reset). ROTATE THIS before exposing the gateway to a network.',
+  );
+  return true;
 }

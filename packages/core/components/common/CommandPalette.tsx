@@ -78,7 +78,7 @@ export default function CommandPalette({
       cmds.push({
         id: 'open-agentic-coder',
         title: 'Open Agentic Coder',
-        description: `Vibe-code and chat with claude on the homehub  (${mod}+J)`,
+        description: `Vibe-code and chat with Claude  (${mod}+J)`,
         category: 'Overlays',
         // Don't call onClose here: palette + coder share the same overlay
         // state, so openOverlay('coder') already hides the palette. Calling

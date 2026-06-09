@@ -27,19 +27,15 @@ export interface GatewayConfig {
 
 // Look for a built web bundle in the conventional spot next to this package.
 // install.sh runs `expo export --platform web --output-dir web-dist` from
-// the repo root, so a global install sees:
+// the repo root, so an in-place install sees:
 //   <install-root>/web-dist/index.html
 //   <install-root>/packages/server/dist/config.js   ← this file
-// __dirname resolves to packages/server/dist (or packages/server/src under
-// tsx); the bundle is two or three levels up.
+// __dirname resolves to packages/server/dist (compiled) or
+// packages/server/src (tsx) — both are exactly three levels below the repo
+// root, so the bundle is at ../../../web-dist from here in either layout.
 function findBundledWeb(): string | null {
-  const candidates = [
-    path.resolve(__dirname, '../..', 'web-dist'),     // dist build
-    path.resolve(__dirname, '../../..', 'web-dist'),  // tsx (src)
-  ];
-  for (const dir of candidates) {
-    if (fs.existsSync(path.join(dir, 'index.html'))) return dir;
-  }
+  const dir = path.resolve(__dirname, '../../..', 'web-dist');
+  if (fs.existsSync(path.join(dir, 'index.html'))) return dir;
   return null;
 }
 

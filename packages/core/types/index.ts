@@ -39,7 +39,7 @@ export interface CustomApp {
   updatedAt: number;
   version: number; // Incremented on each edit
   category?: string; // Optional category for organization
-  // Homehub workspace this app was last pushed from. Set by the relay's
+  // Relay workspace this app was last pushed from. Set by the relay's
   // push_app handler. Used by the CMD-K overlays to default-filter the
   // workspace list to "related to current space".
   originWorkspace?: string;

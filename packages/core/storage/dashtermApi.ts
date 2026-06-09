@@ -1,16 +1,17 @@
 /**
  * AuthProvider + StorageProvider that talk to the native gateway
- * (packages/server). Default backend for the OSS web build — the
- * Supabase providers stay opt-in via EXPO_PUBLIC_BACKEND=supabase.
+ * (packages/server) — the only backend for the OSS web build.
  *
  * Wire format: cookies for session, plain JSON over REST. The gateway
  * runs on EXPO_PUBLIC_GATEWAY_URL (default http://localhost:8765);
  * in production the gateway and the web bundle ship from the same
  * origin and the env var stays empty so requests stay relative.
  *
- * Realtime is intentionally a no-op: cross-tab live sync is out of
- * scope for v0. subscribeUserData runs an initial fetch and returns;
- * subsequent dashboard saves go through setUserData and write-through.
+ * Realtime: subscribeUserData / subscribeApps open one shared WebSocket to
+ * /api/ws. The gateway broadcasts `state:changed` / `apps:changed` after each
+ * write (see packages/server/src/realtime.ts), so every tab/window of the same
+ * account stays in sync. Drops reconnect with backoff and re-fetch to catch
+ * anything missed during the gap.
  */
 
 import type {

@@ -166,8 +166,8 @@ export const useAuth = () => {
   }, []);
 
   // Configure Google Auth Request with Gmail and Calendar scopes.
-  // On web we use Supabase's signInWithPopup directly, so this hook's output
-  // is unused — but Google.useAuthRequest still throws invariantClientId if
+  // On web the auth provider runs its own Google popup flow, so this hook's
+  // output is unused — but Google.useAuthRequest still throws invariantClientId if
   // no clientId is provided. Pass a harmless placeholder so the page renders
   // even when EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID isn't baked into the build
   // (e.g. the /cli pairing page).

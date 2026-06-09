@@ -72,7 +72,7 @@ export default function AgenticCoderSettings({ state, updateState, onClose }: Ap
         run `docker compose up -d dashterm`, expose port 18790 via Tailscale Serve
         for HTTPS, then paste the URL here.{'\n\n'}
         • <Text style={styles.bold}>Prefer the CLI</Text>: run `dashterm dev` locally and
-        edit files with your own Claude Code — no homehub needed.
+        edit files with your own Claude Code — no relay needed.
       </Text>
 
       <View style={[styles.row, { marginTop: 16 }]}>
