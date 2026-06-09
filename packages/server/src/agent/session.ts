@@ -21,6 +21,14 @@ import {
   readSession,
   writeSession,
 } from './workspace';
+import {
+  addHost,
+  ensureSshScaffold,
+  getHostPubkey,
+  listHosts,
+  removeHost,
+  sshBinDir,
+} from './sshHosts';
 
 const AUTHORING_CONTRACT = [
   'You are a coding agent embedded in DashTerm, a terminal-aesthetic dashboard.',
@@ -41,6 +49,19 @@ const AUTHORING_CONTRACT = [
   'After every turn the gateway automatically compiles and publishes any changed apps/*.tsx to the dashboard — do not run a build step or ask the user to.',
   'Keep one app per file. To edit an existing app, edit its apps/<slug>.tsx in place. Be concise in chat; let the code do the talking.',
 ].join('\n');
+
+// Appends a note about the user's configured SSH hosts so claude knows it can
+// reach them from Bash. Aliases resolve via a managed ssh config on PATH.
+function buildSystemPrompt(hostAliases: string[]): string {
+  if (hostAliases.length === 0) return AUTHORING_CONTRACT;
+  return (
+    AUTHORING_CONTRACT +
+    '\n\nRemote hosts: you can run commands on the user\'s configured machines from the Bash tool as ' +
+    '`ssh <alias> \'command\'` (also `scp` works). Available aliases: ' +
+    hostAliases.join(', ') +
+    '. These are pre-configured with keys — no setup needed.'
+  );
+}
 
 type ConnSend = (envelope: unknown) => void;
 
@@ -111,13 +132,16 @@ export class AgentSession {
         this.handleDeleteWorkspace(msg.workspace);
         break;
       case 'list_hosts':
-        // SSH hosts are not supported by the native gateway yet.
-        this.send({ type: 'hosts', items: [] });
+        this.send({ type: 'hosts', items: listHosts(this.config, this.uid) });
         break;
       case 'add_host':
+        this.handleAddHost(msg);
+        break;
       case 'remove_host':
+        this.handleRemoveHost(msg.alias);
+        break;
       case 'get_host_pubkey':
-        this.send({ type: 'error', error: 'SSH hosts are not supported by the native gateway yet' });
+        this.handleGetHostPubkey(msg.alias);
         break;
       default:
         break;
@@ -171,6 +195,41 @@ export class AgentSession {
     this.send({ type: 'workspaces', items: listWorkspaces(this.config, this.uid) });
   }
 
+  private handleAddHost(msg: { alias?: string; host?: string; port?: number; user?: string }): void {
+    try {
+      const { alias, pubkey } = addHost(this.config, this.uid, {
+        alias: msg.alias ?? '',
+        host: msg.host ?? '',
+        port: msg.port,
+        user: msg.user,
+      });
+      this.send({ type: 'host_added', alias, pubkey });
+      // Refresh the list so the client's hosts:N count updates.
+      this.send({ type: 'hosts', items: listHosts(this.config, this.uid) });
+    } catch (err) {
+      this.send({ type: 'error', error: (err as Error).message });
+    }
+  }
+
+  private handleRemoveHost(alias: unknown): void {
+    try {
+      removeHost(this.config, this.uid, String(alias ?? ''));
+      this.send({ type: 'host_removed', alias });
+      this.send({ type: 'hosts', items: listHosts(this.config, this.uid) });
+    } catch (err) {
+      this.send({ type: 'error', error: (err as Error).message });
+    }
+  }
+
+  private handleGetHostPubkey(alias: unknown): void {
+    try {
+      const pubkey = getHostPubkey(this.config, this.uid, String(alias ?? ''));
+      this.send({ type: 'host_pubkey', alias, pubkey });
+    } catch (err) {
+      this.send({ type: 'error', error: (err as Error).message });
+    }
+  }
+
   private handleUser(msg: { text?: string; images?: Array<{ mediaType: string; data: string }> }): void {
     if (this.turnActive) {
       this.send({ type: 'error', error: 'a turn is already in progress' });
@@ -220,6 +279,18 @@ export class AgentSession {
     else assignId = randomUUID();
     this.currentSessionId = resumeId ?? assignId;
 
+    // Set up per-user SSH so claude's Bash can `ssh <alias> '...'`. The wrapper
+    // dir goes first on PATH so `ssh`/`scp` resolve to the managed config.
+    let sshBin: string | null = null;
+    let hostAliases: string[] = [];
+    try {
+      ensureSshScaffold(this.config, this.uid);
+      sshBin = sshBinDir(this.config, this.uid);
+      hostAliases = listHosts(this.config, this.uid).map((h) => h.alias);
+    } catch {
+      sshBin = null;
+    }
+
     const args = [
       '-p',
       '--input-format',
@@ -230,17 +301,21 @@ export class AgentSession {
       '--permission-mode',
       this.config.agentPermissionMode,
       '--append-system-prompt',
-      AUTHORING_CONTRACT,
+      buildSystemPrompt(hostAliases),
     ];
     if (this.config.claudeModel) args.push('--model', this.config.claudeModel);
     if (resumeId) args.push('--resume', resumeId);
     else if (assignId) args.push('--session-id', assignId);
 
+    const env = sshBin
+      ? { ...process.env, PATH: `${sshBin}:${process.env.PATH ?? ''}` }
+      : process.env;
+
     let child: ChildProcessWithoutNullStreams;
     try {
       child = spawn(this.config.claudeBin, args, {
         cwd: this.dir,
-        env: process.env,
+        env,
         stdio: ['pipe', 'pipe', 'pipe'],
       });
     } catch (err) {

@@ -50,10 +50,16 @@ function findBundledWeb(): string | null {
 }
 
 export function loadConfig(overrides: Partial<GatewayConfig> = {}): GatewayConfig {
-  const dataDir =
+  // Resolve to an absolute path: derived paths (SSH IdentityFile, the agent's
+  // ssh wrapper -F config, workspace dirs) get baked into files and configs
+  // that are later read from a different cwd (claude runs in the workspace
+  // dir), so a relative DASHTERM_DATA_DIR like "../../.dashterm-dev-data" must
+  // be pinned now, at boot, while cwd is still the gateway's.
+  const dataDir = path.resolve(
     overrides.dataDir ??
-    process.env.DASHTERM_DATA_DIR ??
-    path.join(homedir(), '.dashterm');
+      process.env.DASHTERM_DATA_DIR ??
+      path.join(homedir(), '.dashterm'),
+  );
 
   const webBundleDir =
     overrides.webBundleDir ??
