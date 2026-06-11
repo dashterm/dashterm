@@ -22,6 +22,8 @@ import { registerSecretsRoutes } from './routes/secrets';
 import { registerWsRoutes } from './routes/ws';
 import { registerAgentRoutes } from './routes/agent';
 import { registerHostsRoutes } from './routes/hosts';
+import { registerAppBackendRoutes } from './routes/appBackends';
+import { reloadAllFromDb } from './agent/backendRegistry';
 
 export interface StartedGateway {
   app: FastifyInstance;
@@ -75,6 +77,13 @@ export async function createServer(
   await registerSecretsRoutes(app, config);
   await registerAgentRoutes(app, config);
   await registerHostsRoutes(app, config);
+  await registerAppBackendRoutes(app, config);
+
+  // Rehydrate every agent-authored backend that survived a restart.
+  const reloaded = reloadAllFromDb();
+  if (reloaded.loaded || reloaded.failed) {
+    app.log.info(`  backends : ${reloaded.loaded} loaded, ${reloaded.failed} failed`);
+  }
 
   app.get('/api/health', async () => ({ ok: true }));
 

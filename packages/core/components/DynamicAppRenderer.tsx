@@ -207,11 +207,30 @@ export default class DynamicAppRenderer extends Component<
 
     try {
       const CustomComponent = compiledComponent;
+      const { customApp, apiBase } = this.props;
+
+      // Bound helper so an app can call ITS OWN agent-authored backend without
+      // knowing its share code: backend('/uptime') → GET /api/x/<id>/uptime.
+      // Resolves the parsed JSON body; throws on a non-2xx with the error text.
+      const backendBase = `${apiBase || ''}/x/${customApp.id}`;
+      const backend = async (p: string, init?: RequestInit) => {
+        const rel = p && p[0] === '/' ? p : `/${p || ''}`;
+        const res = await fetch(backendBase + rel, { credentials: 'include', ...(init || {}) });
+        const ct = res.headers.get('content-type') || '';
+        const payload = ct.includes('application/json') ? await res.json() : await res.text();
+        if (!res.ok) {
+          const msg = payload && (payload as any).error ? (payload as any).error : `HTTP ${res.status}`;
+          throw new Error(typeof msg === 'string' ? msg : JSON.stringify(msg));
+        }
+        return payload;
+      };
 
       return (
         <CustomComponent
           appState={appState}
           onUpdateState={onUpdateState}
+          appId={customApp.id}
+          backend={backend}
           userProfile={userProfile || {
             uid: '',
             email: '',

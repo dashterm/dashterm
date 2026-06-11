@@ -9,6 +9,8 @@ import path from 'path';
 import { getDb } from '../db';
 import { broadcastApps } from '../realtime';
 import { compileTypeScriptCode } from '../compilation/codeCompiler';
+import { compileBackendCode } from '../compilation/backendCompiler';
+import { loadBackend, unloadBackend } from './backendRegistry';
 import { generateUniqueShareCode } from './shareCode';
 import { readPushmap, writePushmap } from './workspace';
 
@@ -90,17 +92,26 @@ export async function pushChangedApps(args: {
 
   for (const file of files) {
     const full = path.join(appsDir, file);
-    let stat: fs.Stats;
+    const slug = file.replace(/\.tsx$/, '');
+    // Optional sibling backend module: apps/<slug>.server.ts
+    const backendFile = path.join(appsDir, `${slug}.server.ts`);
+    let frontMtime: number;
     try {
-      stat = fs.statSync(full);
+      frontMtime = fs.statSync(full).mtimeMs;
     } catch {
       continue;
     }
+    let backendMtime = 0;
+    try {
+      backendMtime = fs.statSync(backendFile).mtimeMs;
+    } catch {
+      /* no backend for this slug */
+    }
     // Small slack (1s) so a write that lands just before turnStart still pushes.
-    if (stat.mtimeMs < sinceMs - 1000) continue;
+    // A backend-only edit also re-pushes the app so its routes reload.
+    if (Math.max(frontMtime, backendMtime) < sinceMs - 1000) continue;
 
     const rel = `apps/${file}`;
-    const slug = file.replace(/\.tsx$/, '');
     let code: string;
     try {
       code = fs.readFileSync(full, 'utf8');
@@ -138,6 +149,31 @@ export async function pushChangedApps(args: {
       continue;
     }
 
+    // Compile the optional backend. A compile failure disables the backend
+    // (compiled = null) and reports the error, rather than running stale code
+    // against the new frontend.
+    let backendCode: string | null = null;
+    let backendCompiled: string | null = null;
+    if (backendMtime > 0) {
+      try {
+        const raw = fs.readFileSync(backendFile, 'utf8');
+        if (raw.trim()) {
+          backendCode = raw;
+          const bc = await compileBackendCode(raw, meta.name);
+          if (bc.success && bc.compiled) {
+            backendCompiled = bc.compiled;
+          } else {
+            errors.push({
+              file: `apps/${slug}.server.ts`,
+              error: [bc.error, ...(bc.details ?? [])].filter(Boolean).join('\n'),
+            });
+          }
+        }
+      } catch (err) {
+        errors.push({ file: `apps/${slug}.server.ts`, error: (err as Error).message });
+      }
+    }
+
     const now = Date.now();
     const version = existing ? existing.version + 1 : 1;
     const row = {
@@ -146,6 +182,8 @@ export async function pushChangedApps(args: {
       description: meta.description,
       code,
       compiled_code: compiled.compiledCode ?? null,
+      backend_code: backendCode,
+      backend_compiled: backendCompiled,
       functions: '[]',
       queryable_data: '[]',
       owner_id: uid,
@@ -159,15 +197,19 @@ export async function pushChangedApps(args: {
     getDb()
       .prepare(
         `insert into apps
-           (id, name, description, code, compiled_code, functions, queryable_data,
+           (id, name, description, code, compiled_code, backend_code, backend_compiled,
+            functions, queryable_data,
             owner_id, owner_name, visibility, category, version, created_at, updated_at)
-         values (@id, @name, @description, @code, @compiled_code, @functions, @queryable_data,
+         values (@id, @name, @description, @code, @compiled_code, @backend_code, @backend_compiled,
+                 @functions, @queryable_data,
                  @owner_id, @owner_name, @visibility, @category, @version, @created_at, @updated_at)
          on conflict(id) do update set
            name = excluded.name,
            description = excluded.description,
            code = excluded.code,
            compiled_code = excluded.compiled_code,
+           backend_code = excluded.backend_code,
+           backend_compiled = excluded.backend_compiled,
            owner_name = excluded.owner_name,
            visibility = excluded.visibility,
            category = excluded.category,
@@ -175,6 +217,17 @@ export async function pushChangedApps(args: {
            updated_at = excluded.updated_at`,
       )
       .run(row);
+
+    // Mount / unmount the backend in the live registry.
+    if (backendCompiled) {
+      const res = loadBackend({ shareCode, ownerId: uid, compiled: backendCompiled, version });
+      if (!res.ok) {
+        errors.push({ file: `apps/${slug}.server.ts`, error: `backend load failed: ${res.error}` });
+      }
+    } else {
+      unloadBackend(shareCode);
+    }
+
     broadcastApps({ type: 'apps:changed', op: 'put', shareCode });
     pushed.push({ shareCode, name: meta.name, version });
   }
