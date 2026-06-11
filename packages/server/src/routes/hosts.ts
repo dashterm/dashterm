@@ -52,6 +52,59 @@ function sshUptime(config: GatewayConfig, uid: string, alias: string): Promise<U
   });
 }
 
+// Lists running containers from docker-on-host AND from every running Proxmox
+// LXC guest (so `pct exec <vmid> -- docker` setups are found without hardcoding
+// a VMID). One line per container: "/name|<RFC3339 started>|<status>". The
+// command is fixed — no user input reaches the shell.
+const DOCKER_PROBE =
+  "docker ps -q 2>/dev/null | xargs -r docker inspect " +
+  "--format '{{.Name}}|{{.State.StartedAt}}|{{.State.Status}}' 2>/dev/null; " +
+  "if command -v pct >/dev/null 2>&1; then " +
+  "for v in $(pct list 2>/dev/null | awk 'NR>1 && $2==\"running\"{print $1}'); do " +
+  "pct exec \"$v\" -- sh -c 'docker ps -q 2>/dev/null | xargs -r docker inspect " +
+  "--format \"{{.Name}}|{{.State.StartedAt}}|{{.State.Status}}\" 2>/dev/null' 2>/dev/null; " +
+  "done; fi";
+
+interface DockerContainer {
+  name: string;
+  startedEpoch: number | null;
+  status: string;
+}
+
+interface DockerResult {
+  ok: boolean;
+  containers?: DockerContainer[];
+  count?: number;
+  error?: string;
+}
+
+function sshDocker(config: GatewayConfig, uid: string, alias: string): Promise<DockerResult> {
+  return new Promise((resolve) => {
+    const ssh = path.join(sshBinDir(config, uid), 'ssh');
+    execFile(ssh, [alias, DOCKER_PROBE], { timeout: 15000, maxBuffer: 4 << 20 }, (err, stdout, stderr) => {
+      // A non-zero exit with output still carries containers (e.g. one guest
+      // failed); only treat a truly empty result as an error.
+      if (err && !String(stdout).trim()) {
+        return resolve({ ok: false, error: (stderr || err.message || 'ssh failed').trim().slice(0, 300) });
+      }
+      const containers: DockerContainer[] = String(stdout)
+        .split('\n')
+        .map((l) => l.trim())
+        .filter(Boolean)
+        .map((line) => {
+          const [name, started, status] = line.split('|');
+          const t = Date.parse(started);
+          return {
+            name: (name || '').replace(/^\//, ''),
+            startedEpoch: Number.isNaN(t) ? null : Math.floor(t / 1000),
+            status: status || 'running',
+          };
+        });
+      resolve({ ok: true, containers, count: containers.length });
+    });
+  });
+}
+
 export async function registerHostsRoutes(app: FastifyInstance, config: GatewayConfig) {
   // GET /api/hosts → aliases the user has configured (no secrets).
   app.get('/api/hosts', async (req, reply) => {
@@ -77,5 +130,16 @@ export async function registerHostsRoutes(app: FastifyInstance, config: GatewayC
     const known = listHosts(config, user.id).find((h) => h.alias === alias);
     if (!known) return reply.code(404).send({ ok: false, error: 'unknown host' });
     return { alias, host: known.host, ...(await sshUptime(config, user.id, alias)) };
+  });
+
+  // GET /api/hosts/:alias/docker → running containers (host + Proxmox LXC guests).
+  app.get<{ Params: { alias: string } }>('/api/hosts/:alias/docker', async (req, reply) => {
+    const user = requireUser(req, reply, config);
+    if (!user) return;
+    const { alias } = req.params;
+    ensureSshScaffold(config, user.id);
+    const known = listHosts(config, user.id).find((h) => h.alias === alias);
+    if (!known) return reply.code(404).send({ ok: false, error: 'unknown host' });
+    return { alias, host: known.host, ...(await sshDocker(config, user.id, alias)) };
   });
 }
