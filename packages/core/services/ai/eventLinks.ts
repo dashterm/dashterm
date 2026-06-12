@@ -2,10 +2,11 @@
  * Event link handlers (automations between apps)
  */
 
-import { SystemContext, EventLink } from '../../types';
+import { SystemContext, EventLink, CustomApp } from '../../types';
 import { getApp, getAllAIFunctions, appEventBus, AppEvent, AppEventHandler, AppContext } from '../../registry';
 import { AppActions, FunctionResult } from './types';
 import { getAppStateFromContext, updateAppState, findAppInstanceInSpace } from './appStateHelpers';
+import { handleCustomAppFunction } from './customApps';
 
 /**
  * Handle creating an event link (automation between apps)
@@ -27,42 +28,62 @@ export async function handleCreateEventLink(
 
   console.log('🔗 AI Service: Creating event link:', name);
 
+  const customApps = (context as { customApps?: Record<string, CustomApp> }).customApps || {};
+
   try {
-    // Validate trigger app and event
+    // Validate trigger app + event. Built-in apps must declare the emit; custom
+    // (vibe-coded) apps don't declare emits in the registry, so we trust the
+    // event string for them (an unmatched pattern simply never fires).
     const sourceApp = getApp(triggerApp);
-    if (!sourceApp) {
+    const customSource = customApps[triggerApp];
+    if (!sourceApp && !customSource) {
       return {
         success: false,
-        message: `Source app "${triggerApp}" not found. Available apps: workout, todo, habit, countdown, pomodoro, ticker, weather`
+        message: `Source app "${triggerApp}" not found. Built-in apps: workout, todo, habit, countdown, pomodoro, ticker, weather — or a custom app's share code.`
       };
     }
-
-    // Check if the source app emits this event
-    const emitsEvent = sourceApp.events?.emits?.some(e => e.name === triggerEvent);
-    if (!emitsEvent) {
-      const availableEvents = sourceApp.events?.emits?.map(e => e.name).join(', ') || 'none';
-      return {
-        success: false,
-        message: `App "${triggerApp}" doesn't emit event "${triggerEvent}". Available events: ${availableEvents}`
-      };
+    if (sourceApp) {
+      const emitsEvent = sourceApp.events?.emits?.some(e => e.name === triggerEvent);
+      if (!emitsEvent) {
+        const availableEvents = sourceApp.events?.emits?.map(e => e.name).join(', ') || 'none';
+        return {
+          success: false,
+          message: `App "${triggerApp}" doesn't emit event "${triggerEvent}". Available events: ${availableEvents}`
+        };
+      }
     }
 
-    // Validate target app
+    // Validate target. Built-in target → registry AI function. Custom target →
+    // a function declared on the custom app; store its dispatch name
+    // (`{appNameSanitized}_{fn}`) so executeEventLinkAction can route it.
     const destApp = getApp(targetApp);
-    if (!destApp) {
+    const customTarget = customApps[targetApp];
+    let finalTargetAction = targetAction;
+    if (destApp) {
+      const targetFunc = destApp.aiFunctions?.find(f => f.definition.name === targetAction);
+      if (!targetFunc) {
+        const availableFuncs = destApp.aiFunctions?.map(f => f.definition.name).join(', ') || 'none';
+        return {
+          success: false,
+          message: `Function "${targetAction}" not found in "${targetApp}". Available: ${availableFuncs}`
+        };
+      }
+    } else if (customTarget) {
+      const prefix = customTarget.name.toLowerCase().replace(/[^a-z0-9]/g, '');
+      const bare = targetAction.startsWith(`${prefix}_`) ? targetAction.slice(prefix.length + 1) : targetAction;
+      const fn = (customTarget.functions || []).find(f => f.name === bare);
+      if (!fn) {
+        const availableFuncs = (customTarget.functions || []).map(f => f.name).join(', ') || 'none';
+        return {
+          success: false,
+          message: `Function "${bare}" not found in custom app "${customTarget.name}". Available: ${availableFuncs}`
+        };
+      }
+      finalTargetAction = `${prefix}_${bare}`;
+    } else {
       return {
         success: false,
         message: `Target app "${targetApp}" not found.`
-      };
-    }
-
-    // Validate target action exists
-    const targetFunc = destApp.aiFunctions?.find(f => f.definition.name === targetAction);
-    if (!targetFunc) {
-      const availableFuncs = destApp.aiFunctions?.map(f => f.definition.name).join(', ') || 'none';
-      return {
-        success: false,
-        message: `Function "${targetAction}" not found in "${targetApp}". Available: ${availableFuncs}`
       };
     }
 
@@ -72,7 +93,7 @@ export async function handleCreateEventLink(
       name,
       sourceEvent: `${triggerApp}:${triggerEvent}`,
       targetApp,
-      targetAction,
+      targetAction: finalTargetAction,
       actionParams,
       enabled: true,
       createdAt: Date.now(),
@@ -264,5 +285,35 @@ export async function executeEventLinkAction(
     } catch (err) {
       console.error(`[AIService] Event link ${link.name} failed:`, err);
     }
+    return;
   }
+
+  // Not a built-in function — fall back to a custom (vibe-coded) app target.
+  // Custom-app functions are named `{appNameSanitized}_{fn}`; handleCustomAppFunction
+  // resolves the app from that prefix and writes lastFunctionCall onto the app
+  // instance so the component reacts. Build the lookup map from context.customApps.
+  if (link.targetAction.includes('_')) {
+    const customApps = (context as { customApps?: Record<string, CustomApp> }).customApps || {};
+    const customAppFunctions = new Map<string, { name: string }[]>();
+    for (const [appId, app] of Object.entries(customApps)) {
+      const prefix = app.name.toLowerCase().replace(/[^a-z0-9]/g, '');
+      const fns = (app.functions || []).map((f) => ({ name: `${prefix}_${f.name}` }));
+      customAppFunctions.set(appId, fns);
+    }
+    try {
+      const result = await handleCustomAppFunction(
+        link.targetAction,
+        resolvedParams,
+        context,
+        appActions,
+        customAppFunctions,
+      );
+      console.log(`[AIService] Event link ${link.name} (custom app) executed:`, result);
+    } catch (err) {
+      console.error(`[AIService] Event link ${link.name} (custom app) failed:`, err);
+    }
+    return;
+  }
+
+  console.warn(`[AIService] Event link ${link.name}: target action "${link.targetAction}" not found (built-in or custom).`);
 }

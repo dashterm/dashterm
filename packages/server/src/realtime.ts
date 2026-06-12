@@ -66,6 +66,12 @@ export function broadcastApps(payload: unknown): void {
   for (const conn of all) send(conn.socket, payload);
 }
 
+// Fan out to every connected socket regardless of user. Used for
+// install-wide notices like `update:available` that aren't user-scoped.
+export function broadcastAll(payload: unknown): void {
+  for (const conn of all) send(conn.socket, payload);
+}
+
 // Test-only escape hatch. Exposes the live count so the smoke test can
 // assert that connections register/unregister cleanly.
 export function _debugCounts(): { totalSockets: number; users: number } {

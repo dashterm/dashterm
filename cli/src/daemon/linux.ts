@@ -77,6 +77,18 @@ export function uninstallLinux(): boolean {
   return true;
 }
 
+// Stop/start without removing the unit — used by `dashterm update` to take the
+// gateway down for the rebuild, then bring it back up. Both are best-effort.
+export function stopLinux(): boolean {
+  const r = spawnSync('systemctl', ['--user', 'stop', LINUX_UNIT_NAME], { stdio: 'ignore' });
+  return r.status === 0;
+}
+
+export function startLinux(): boolean {
+  const r = spawnSync('systemctl', ['--user', 'start', LINUX_UNIT_NAME], { stdio: 'ignore' });
+  return r.status === 0;
+}
+
 export interface LinuxStatus {
   active: boolean;
   state: string;

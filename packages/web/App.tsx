@@ -39,6 +39,7 @@ export default function App() {
     updateEventLinks,
     updateAgenticCoderOverlay,
     updateSchedulerOverlay,
+    updateEventsOverlay,
   } = useRealtimeStateWithAuth();
 
   const { mustResetPassword } = useAuth();
@@ -92,6 +93,7 @@ export default function App() {
       updateEventLinks={updateEventLinks}
       updateAgenticCoderOverlay={updateAgenticCoderOverlay}
       updateSchedulerOverlay={updateSchedulerOverlay}
+      updateEventsOverlay={updateEventsOverlay}
     />
   );
 }

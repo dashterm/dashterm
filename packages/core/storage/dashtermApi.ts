@@ -19,6 +19,7 @@ import type {
   AuthUser,
   SignInResult,
   StorageProvider,
+  UpdateStatus,
   UserData,
   UserSummary,
 } from './types';
@@ -220,6 +221,7 @@ export class DashTermApiStorageProvider implements StorageProvider {
   private ws: WebSocket | null = null;
   private userListeners = new Map<string, Set<(data: UserData | null) => void>>();
   private appsListeners = new Set<(apps: CustomApp[]) => void>();
+  private updateListeners = new Set<(status: UpdateStatus) => void>();
   private reconnectAttempts = 0;
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
   private wantConnected = false;
@@ -312,6 +314,37 @@ export class DashTermApiStorageProvider implements StorageProvider {
     return () => {};
   }
 
+  // ---- self-update ----
+
+  async getUpdateStatus(): Promise<UpdateStatus> {
+    return http<UpdateStatus>('GET', '/api/update/status');
+  }
+
+  async runUpdate(): Promise<void> {
+    await http<{ started: boolean }>('POST', '/api/update/run');
+  }
+
+  private async fetchAndDispatchUpdate(): Promise<void> {
+    try {
+      const status = await this.getUpdateStatus();
+      for (const cb of this.updateListeners) cb(status);
+    } catch {
+      /* leave the last-known status in place on a transient failure */
+    }
+  }
+
+  subscribeUpdate(cb: (status: UpdateStatus) => void): () => void {
+    this.updateListeners.add(cb);
+    void this.getUpdateStatus().then(cb).catch(() => {
+      /* no status yet — the banner just stays hidden */
+    });
+    this.ensureWs();
+    return () => {
+      this.updateListeners.delete(cb);
+      this.maybeCloseWs();
+    };
+  }
+
   // ---- websocket plumbing ----
 
   private ensureWs(): void {
@@ -333,6 +366,10 @@ export class DashTermApiStorageProvider implements StorageProvider {
         // e.g. an agent push that landed during a reconnect — would otherwise
         // leave the custom-app list stale until the next broadcast or reload.
         if (this.appsListeners.size > 0) void this.fetchAndDispatchApps();
+        // A new release tag may have appeared while we were disconnected (or
+        // before we first connected): fetch status so the banner reflects it
+        // without waiting for the next periodic broadcast.
+        if (this.updateListeners.size > 0) void this.fetchAndDispatchUpdate();
       };
 
       sock.onmessage = (ev: MessageEvent) => {
@@ -343,6 +380,12 @@ export class DashTermApiStorageProvider implements StorageProvider {
           return;
         }
         if (!msg || typeof msg.type !== 'string') return;
+        if (msg.type === 'update:available') {
+          // The broadcast isn't user-scoped, so re-fetch to get this user's
+          // canApply (admin + daemon) alongside the version delta.
+          void this.fetchAndDispatchUpdate();
+          return;
+        }
         if (msg.type === 'state:changed') {
           // We have the new appState in the push, but the dashboard's
           // consumer expects a full UserData (profile + appState). Profiles
@@ -396,7 +439,11 @@ export class DashTermApiStorageProvider implements StorageProvider {
   }
 
   private hasListeners(): boolean {
-    return this.userListeners.size > 0 || this.appsListeners.size > 0;
+    return (
+      this.userListeners.size > 0 ||
+      this.appsListeners.size > 0 ||
+      this.updateListeners.size > 0
+    );
   }
 
   private maybeCloseWs(): void {

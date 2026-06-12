@@ -2,8 +2,10 @@ import React from 'react';
 import { View, Text, StyleSheet, Modal, Pressable, Platform, KeyboardAvoidingView } from 'react-native';
 import AgenticCoder from '../../apps/AgenticCoder';
 import Scheduler from '../../apps/Scheduler';
+import EventsSubsystem from '../../apps/EventsSubsystem';
+import { EventLink, CustomApp } from '../../types';
 
-export type OverlayKind = 'coder' | 'scheduler';
+export type OverlayKind = 'coder' | 'scheduler' | 'events';
 
 interface OverlayHostProps {
   open: OverlayKind | null;
@@ -14,6 +16,14 @@ interface OverlayHostProps {
   // Global scheduler slice
   schedulerState: any;
   updateScheduler: (updates: any) => void;
+  // Global events-subsystem slice (persisted overlay prefs; mostly the overlay
+  // reads live bus data + eventLinks rather than this).
+  eventsState?: any;
+  updateEvents?: (updates: any) => void;
+  // Cross-app event links + custom-app registry, for the EVENTS SUBSYSTEM view.
+  eventLinks?: EventLink[];
+  updateEventLinks?: (links: EventLink[]) => void;
+  customApps?: Record<string, CustomApp>;
   // Workspace filtering: names of workspaces whose apps appear in the
   // currently-active Space, computed by the parent from customApps'
   // originWorkspace field. Empty array / undefined → don't apply filtering.
@@ -27,11 +37,19 @@ export default function OverlayHost({
   updateAgenticCoder,
   schedulerState,
   updateScheduler,
+  eventsState,
+  updateEvents,
+  eventLinks,
+  updateEventLinks,
+  customApps,
   relatedWorkspaceNames,
 }: OverlayHostProps) {
   if (!open) return null;
 
-  const title = open === 'coder' ? 'AGENTIC CODER' : 'SCHEDULER';
+  const title =
+    open === 'coder' ? 'AGENTIC CODER' :
+    open === 'scheduler' ? 'SCHEDULER' :
+    'EVENTS SUBSYSTEM';
 
   return (
     <Modal visible transparent animationType="fade" onRequestClose={onClose}>
@@ -59,11 +77,19 @@ export default function OverlayHost({
                     onUpdate={updateAgenticCoder}
                     relatedWorkspaceNames={relatedWorkspaceNames}
                   />
-                ) : (
+                ) : open === 'scheduler' ? (
                   <Scheduler
                     appState={schedulerState || {}}
                     onUpdate={updateScheduler}
                     relatedWorkspaceNames={relatedWorkspaceNames}
+                  />
+                ) : (
+                  <EventsSubsystem
+                    appState={eventsState || {}}
+                    onUpdate={updateEvents}
+                    eventLinks={eventLinks}
+                    updateEventLinks={updateEventLinks}
+                    customApps={customApps}
                   />
                 )}
               </View>

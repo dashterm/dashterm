@@ -83,6 +83,7 @@ export interface AppState {
 export interface OverlayState {
   agenticCoder?: any;
   scheduler?: any;
+  events?: any;
 }
 
 export interface UserProfile {

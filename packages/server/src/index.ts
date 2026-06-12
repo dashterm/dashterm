@@ -23,7 +23,10 @@ import { registerWsRoutes } from './routes/ws';
 import { registerAgentRoutes } from './routes/agent';
 import { registerHostsRoutes } from './routes/hosts';
 import { registerAppBackendRoutes } from './routes/appBackends';
+import { registerUpdateRoutes } from './routes/update';
 import { reloadAllFromDb } from './agent/backendRegistry';
+import { broadcastAll } from './realtime';
+import { startUpdateChecker } from './infra/update';
 
 export interface StartedGateway {
   app: FastifyInstance;
@@ -78,6 +81,7 @@ export async function createServer(
   await registerAgentRoutes(app, config);
   await registerHostsRoutes(app, config);
   await registerAppBackendRoutes(app, config);
+  await registerUpdateRoutes(app, config);
 
   // Rehydrate every agent-authored backend that survived a restart.
   const reloaded = reloadAllFromDb();
@@ -127,5 +131,14 @@ export async function startServer(
   } else {
     started.app.log.info(`  web      : (none — run Expo dev server alongside)`);
   }
+
+  // Boot + 6-hourly update check. Broadcasts to every connected tab when a
+  // newer release tag appears. No-ops (supported:false) in dev / non-git
+  // installs. Timers are unref'd so they never hold the process open.
+  startUpdateChecker(started.config, (status) => {
+    started.app.log.info(`update available: ${status.currentVersion} → ${status.latestVersion}`);
+    broadcastAll({ type: 'update:available', status });
+  });
+
   return started;
 }

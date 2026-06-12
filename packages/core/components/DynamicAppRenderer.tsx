@@ -1,6 +1,7 @@
 import React, { Component, ErrorInfo } from 'react';
 import { View, Text, StyleSheet, ScrollView } from 'react-native';
 import { CustomApp, UserProfile } from '../types';
+import { appEventBus, AppEvent } from '../registry';
 
 interface DynamicAppRendererProps {
   customApp: CustomApp;
@@ -29,6 +30,13 @@ export default class DynamicAppRenderer extends Component<
   DynamicAppRendererProps,
   DynamicAppRendererState
 > {
+  // Event-bus subscriptions created by THIS app instance (via the injected
+  // `events.on(...)`). Tracked so they can be torn down on unmount / recompile —
+  // vibe-coded apps frequently subscribe without returning an unsub, so the
+  // renderer owns cleanup. Not React state: must survive renders and never
+  // trigger a re-render.
+  private eventUnsubscribers: Array<() => void> = [];
+
   constructor(props: DynamicAppRendererProps) {
     super(props);
     this.state = {
@@ -53,9 +61,33 @@ export default class DynamicAppRenderer extends Component<
     this.compileAndLoadComponent();
   }
 
+  componentWillUnmount() {
+    this.teardownEventSubscriptions();
+  }
+
+  // Drain every event-bus subscription this instance registered. Called on
+  // unmount (tile removed / page nav) and before an in-place recompile so the
+  // old compiled component's listeners don't leak when the new one re-subscribes.
+  private teardownEventSubscriptions() {
+    for (const unsub of this.eventUnsubscribers) {
+      try {
+        unsub();
+      } catch (err) {
+        console.error('[Custom App] event unsubscribe error', err);
+      }
+    }
+    this.eventUnsubscribers = [];
+  }
+
   componentDidUpdate(prevProps: DynamicAppRendererProps) {
-    // Reset error state and recompile if app code changes (edited)
-    if (prevProps.customApp.code !== this.props.customApp.code) {
+    // Reset error state and recompile if app code changes (edited) or the app
+    // identity changes. Tear down old subscriptions first so they don't outlive
+    // the compiled component that created them.
+    if (
+      prevProps.customApp.code !== this.props.customApp.code ||
+      prevProps.customApp.id !== this.props.customApp.id
+    ) {
+      this.teardownEventSubscriptions();
       this.setState({
         hasError: false,
         error: null,
@@ -225,12 +257,34 @@ export default class DynamicAppRenderer extends Component<
         return payload;
       };
 
+      // Cross-app event bus, bound to THIS app's share code as the source.
+      //   events.emit('priceDrop', {...})  → fires '<shareCode>:priceDrop'
+      //   events.on('<otherId>:priceDrop', fn) / events.on('<otherId>:*', fn) / events.on('*', fn)
+      // Call `on` inside a useEffect/useRef so a single listener isn't
+      // re-registered on every render. Every subscription is tracked and
+      // auto-torn-down when this tile unmounts or its code is recompiled.
+      const events = {
+        emit: (name: string, data: any) => {
+          appEventBus.emitFromApp(customApp.id, name, data);
+        },
+        on: (pattern: string, handler: (event: AppEvent) => void): (() => void) => {
+          const unsub = appEventBus.on(pattern, handler);
+          this.eventUnsubscribers.push(unsub);
+          return () => {
+            unsub();
+            const i = this.eventUnsubscribers.indexOf(unsub);
+            if (i !== -1) this.eventUnsubscribers.splice(i, 1);
+          };
+        },
+      };
+
       return (
         <CustomComponent
           appState={appState}
           onUpdateState={onUpdateState}
           appId={customApp.id}
           backend={backend}
+          events={events}
           userProfile={userProfile || {
             uid: '',
             email: '',

@@ -841,6 +841,14 @@ export const useRealtimeStateWithAuth = () => {
     });
   };
 
+  const updateEventsOverlay = (updates: any) => {
+    const overlays = stateRef.current?.overlays || {};
+    const current = overlays.events || {};
+    updateState({
+      overlays: { ...overlays, events: { ...current, ...updates } },
+    });
+  };
+
   const updateAppInSpace = (spaceId: string, appId: string, updates: Partial<SpaceAppLayout>) => {
     const currentLayout = stateRef.current?.webLayout || initialState.webLayout;
     const spaces = currentLayout.spaces || [];
@@ -902,5 +910,6 @@ export const useRealtimeStateWithAuth = () => {
     // Global overlays (AgenticCoder, Scheduler — opened via CMD-K)
     updateAgenticCoderOverlay,
     updateSchedulerOverlay,
+    updateEventsOverlay,
   };
 };

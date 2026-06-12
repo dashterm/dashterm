@@ -34,6 +34,7 @@ interface CommandPaletteProps {
   // appear next to the entries for desktop discoverability.
   onOpenCoder?: () => void;
   onOpenScheduler?: () => void;
+  onOpenEvents?: () => void;
   onOpenSettings?: () => void;
 }
 
@@ -54,6 +55,7 @@ export default function CommandPalette({
   onUpdateSpaceGrid,
   onOpenCoder,
   onOpenScheduler,
+  onOpenEvents,
   onOpenSettings,
 }: CommandPaletteProps) {
   const [searchText, setSearchText] = useState('');
@@ -99,6 +101,18 @@ export default function CommandPalette({
           onOpenScheduler();
         },
         keywords: ['scheduler', 'cron', 'schedule', 'jobs', 'queue', 'i'],
+      });
+    }
+    if (onOpenEvents) {
+      cmds.push({
+        id: 'open-events',
+        title: 'Open Events Subsystem',
+        description: 'Monitor and manage the event bus  (⌘B / Ctrl+B)',
+        category: 'Overlays',
+        action: () => {
+          onOpenEvents();
+        },
+        keywords: ['events', 'bus', 'monitor', 'links', 'automations', 'subscribe', 'emit', 'b'],
       });
     }
     if (onOpenSettings) {
@@ -313,7 +327,7 @@ export default function CommandPalette({
     });
 
     return cmds;
-  }, [activeApps, customApps, spaces, activeSpaceId, onAddApp, onRemoveApp, onDeleteCustomApp, onClose, onSwitchSpace, onCreateSpace, onDeleteSpace, onRenameSpace, onUpdateSpaceGrid, onOpenCoder, onOpenScheduler]);
+  }, [activeApps, customApps, spaces, activeSpaceId, onAddApp, onRemoveApp, onDeleteCustomApp, onClose, onSwitchSpace, onCreateSpace, onDeleteSpace, onRenameSpace, onUpdateSpaceGrid, onOpenCoder, onOpenScheduler, onOpenEvents, onOpenSettings]);
 
   // Filter commands based on search
   const filteredCommands = useMemo(() => {
@@ -406,6 +420,7 @@ export default function CommandPalette({
       'rename-space',
       'open-agentic-coder',
       'open-scheduler',
+      'open-events',
     ]);
     if (!SELF_CLOSING.has(command.id)) {
       onClose();

@@ -14,14 +14,18 @@ import {
   installMacos,
   isInstalledMacos,
   macosPlistPath,
+  startMacos,
   statusMacos,
+  stopMacos,
   uninstallMacos,
 } from './macos';
 import {
   installLinux,
   isInstalledLinux,
   linuxUnitPath,
+  startLinux,
   statusLinux,
+  stopLinux,
   uninstallLinux,
 } from './linux';
 
@@ -72,6 +76,20 @@ export function uninstallDaemon(): boolean {
 export function isDaemonInstalled(): boolean {
   if (process.platform === 'darwin') return isInstalledMacos();
   if (process.platform === 'linux') return isInstalledLinux();
+  return false;
+}
+
+/** Stop the running gateway without removing the unit (for in-place updates). */
+export function stopDaemon(): boolean {
+  if (process.platform === 'darwin') return stopMacos();
+  if (process.platform === 'linux') return stopLinux();
+  return false;
+}
+
+/** Start the gateway from the already-installed unit. */
+export function startDaemon(): boolean {
+  if (process.platform === 'darwin') return startMacos();
+  if (process.platform === 'linux') return startLinux();
   return false;
 }
 

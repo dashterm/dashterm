@@ -36,18 +36,11 @@ export default function AIAssistant({ aiState, onUpdateAI, systemContext, appAct
   const [isLoading, setIsLoading] = useState(false);
   const scrollViewRef = useRef<ScrollView>(null);
 
-  // Register app actions with AI service on mount
-  useEffect(() => {
-    aiService.registerAppActions(appActions);
-  }, [appActions]);
-
-  // Initialize event listeners for cross-app communication
-  useEffect(() => {
-    console.log('[AIAssistant] Initializing event listeners, eventLinks:', systemContext.eventLinks?.length || 0);
-    aiService.initializeEventListeners(() => systemContext);
-    // Also register any dynamic event links saved in state
-    aiService.registerDynamicEventLinks(() => systemContext);
-  }, [systemContext]);
+  // NOTE: app-action registration and event-listener/dynamic-event-link wiring
+  // now live at the always-mounted layout level (WebDashboard), not here — so
+  // cross-app events fire whether or not this tile is on a Space. This component
+  // only reads from aiService (chat). Don't re-add registration here, or it will
+  // double-register over the shared unsubscriber array.
 
   // Ensure aiState has conversations
   const conversations = aiState?.conversations || [];

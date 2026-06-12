@@ -78,6 +78,23 @@ export interface UserSummary {
   lastActive: number;
 }
 
+// Self-update status from the gateway (/api/update/status). `supported` is
+// false in dev / non-git installs (the banner stays hidden); `canApply` is
+// true only for admins on a daemon install (otherwise the banner shows the
+// manual command instead of an enabled button).
+export interface UpdateStatus {
+  supported: boolean;
+  reason: string | null;
+  available: boolean;
+  currentVersion: string | null;
+  latestVersion: string | null;
+  canRestart: boolean;
+  canApply: boolean;
+  running: boolean;
+  checkedAt: number | null;
+  error: string | null;
+}
+
 export interface StorageProvider {
   // Per-user blob (profile + appState). The gateway stores this as a single
   // JSON document per user; this API stays stable regardless.
@@ -101,4 +118,11 @@ export interface StorageProvider {
   // RPC that cascades to auth.users + the user's app_state.
   listUsers(): Promise<UserSummary[]>;
   deleteUser(uid: string): Promise<void>;
+
+  // Self-update. getUpdateStatus reads /api/update/status; runUpdate POSTs
+  // /api/update/run (admin-only on the gateway); subscribeUpdate yields the
+  // status on mount and again on each `update:available` WS broadcast.
+  getUpdateStatus(): Promise<UpdateStatus>;
+  runUpdate(): Promise<void>;
+  subscribeUpdate(cb: (status: UpdateStatus) => void): () => void;
 }

@@ -26,10 +26,12 @@ import { CommandPalette } from "../../core/components/common";
 import AppInfoButton from "../../core/components/common/AppInfoButton";
 import AppSettingsButton from "../../core/components/common/AppSettingsButton";
 import AppRenderer from "../../core/components/common/AppRenderer";
+import { aiService } from "../../core/services/aiService";
 import { gatewayApiBase } from "../../core/utils/dashtermUrl";
 import { useKeyboardShortcut } from "../../core/hooks/useKeyboardShortcut";
 import { useOverlayShortcuts } from "../../core/hooks/useOverlayShortcuts";
 import OverlayHost from "../../core/components/overlays/OverlayHost";
+import UpdateBanner from "../../core/components/common/UpdateBanner";
 import { useAuth } from "../../core/hooks/useAuth";
 import { styles } from "./WebDashboard/styles";
 import { useGridDragDrop } from "./WebDashboard/useGridDragDrop";
@@ -74,9 +76,10 @@ interface WebDashboardProps {
   updateAppInstance: (instanceId: string, updates: any) => void;
   // Event links management
   updateEventLinks: (links: import("../../core/types").EventLink[]) => void;
-  // Global overlays (AgenticCoder, Scheduler — opened via CMD-K)
+  // Global overlays (AgenticCoder, Scheduler, Events — opened via CMD-K / CTRL-B)
   updateAgenticCoderOverlay: (updates: any) => void;
   updateSchedulerOverlay: (updates: any) => void;
+  updateEventsOverlay: (updates: any) => void;
 }
 
 const HEADER_HEIGHT = 60;
@@ -108,6 +111,7 @@ export default function WebDashboard({
   updateEventLinks,
   updateAgenticCoderOverlay,
   updateSchedulerOverlay,
+  updateEventsOverlay,
 }: WebDashboardProps) {
   const { signOut } = useAuth();
   // CMD-K leader: K=palette, A=coder, S=scheduler; bare CMD-K reopens last.
@@ -317,6 +321,42 @@ export default function WebDashboard({
   // the AgenticCoder relay. Derived from the gateway URL (same origin in prod).
   const apiBase = gatewayApiBase();
 
+  // Always-on event wiring. This used to live inside the AIAssistant tile's
+  // useEffect, which meant cross-app event links only fired while that tile was
+  // mounted on a Space. The dashboard is always mounted, so registration belongs
+  // here — event links (and the EVENTS SUBSYSTEM overlay) now work with no
+  // AIAssistant tile present.
+  const aiSystemContext = useMemo(() => ({
+    userProfile: userProfile!,
+    deviceType: state.deviceType as 'web' | 'mobile',
+    currentApp: "ai",
+    customApps: state.customApps,
+    appInstances: state.appInstances,
+    spaces: spaces,
+    activeSpaceId: activeSpaceId,
+    // No single AI instance at the top level — event-link targets resolve their
+    // instance via findAppInstanceInSpace (which scans appInstances), so this is fine.
+    currentAIInstanceId: undefined,
+    eventLinks: state.eventLinks,
+  }), [userProfile, state.deviceType, state.customApps, state.appInstances, spaces, activeSpaceId, state.eventLinks]);
+
+  const aiAppActions = useMemo(() => ({
+    ...appActions,
+    updateAppInstance,
+    updateEventLinks,
+    addAppToSpace,
+  }), [appActions, updateAppInstance, updateEventLinks, addAppToSpace]);
+
+  useEffect(() => {
+    aiService.registerAppActions(aiAppActions);
+    // Order matters: initializeEventListeners() resets the shared unsubscriber
+    // array and re-subscribes built-in plugin listeners; registerDynamicEventLinks()
+    // then PUSHES the user's enabled links onto that same array. Calling them in
+    // this order rebuilds the full listener set with no stale/duplicate entries.
+    aiService.initializeEventListeners(() => aiSystemContext);
+    aiService.registerDynamicEventLinks(() => aiSystemContext);
+  }, [aiSystemContext, aiAppActions]);
+
   // Helper to render app content using the shared AppRenderer component
   const renderAppContent = (appLayout: SpaceAppLayout) => {
     const instanceId = appLayout.id;
@@ -445,6 +485,10 @@ export default function WebDashboard({
 
   return (
     <View style={[styles.dashboard, { height: dimensions.height }]}>
+      {/* Self-update notice — renders only when the gateway reports a newer
+          release tag (no-op in dev / non-git installs). */}
+      <UpdateBanner />
+
       {/* Header with Space Tabs */}
       <View style={[styles.header, { height: HEADER_HEIGHT }]}>
         <View style={styles.headerLeft}>
@@ -1229,18 +1273,29 @@ export default function WebDashboard({
         onUpdateSpaceGrid={updateSpaceGrid}
         onOpenCoder={() => overlay.openOverlay('coder')}
         onOpenScheduler={() => overlay.openOverlay('scheduler')}
+        onOpenEvents={() => overlay.openOverlay('events')}
         onOpenSettings={systemSpace ? () => switchSpace(systemSpace.id) : undefined}
       />
 
-      {/* Global overlays — AgenticCoder + Scheduler. Composed from the same
-          components that used to live as tile plugins, now fed global state. */}
+      {/* Global overlays — AgenticCoder + Scheduler + Events Subsystem. Composed
+          from the same components that used to live as tile plugins, now fed
+          global state. */}
       <OverlayHost
-        open={overlay.open === 'coder' ? 'coder' : overlay.open === 'scheduler' ? 'scheduler' : null}
+        open={
+          overlay.open === 'coder' ? 'coder' :
+          overlay.open === 'scheduler' ? 'scheduler' :
+          overlay.open === 'events' ? 'events' : null
+        }
         onClose={overlay.closeOverlay}
         agenticCoderState={state.overlays?.agenticCoder}
         updateAgenticCoder={updateAgenticCoderOverlay}
         schedulerState={state.overlays?.scheduler}
         updateScheduler={updateSchedulerOverlay}
+        eventsState={state.overlays?.events}
+        updateEvents={updateEventsOverlay}
+        eventLinks={state.eventLinks}
+        updateEventLinks={updateEventLinks}
+        customApps={state.customApps}
         relatedWorkspaceNames={Array.from(new Set(
           activeSpace.apps
             .map((a) => state.customApps?.[a.type]?.originWorkspace)

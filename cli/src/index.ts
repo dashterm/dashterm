@@ -2,6 +2,7 @@
 import { startCommand } from './commands/gateway';
 import { onboardCommand } from './commands/onboard';
 import { daemonCommand } from './commands/daemon';
+import { updateCommand } from './commands/update';
 import { providerCommand } from './commands/provider';
 import { backupCommand, restoreCommand } from './commands/backup';
 import {
@@ -33,6 +34,7 @@ function help(): number {
   info('  daemon status                  print whether the daemon is running');
   info('  daemon logs [-f] [--err]       tail ~/.dashterm/gateway.log');
   info('  daemon restart                 reinstall (picks up env changes)');
+  info('  update [--check]                update to the latest release tag (git checkout + rebuild + restart)');
   info('');
   info(c.bold('AI providers (Claude / GPT / Gemini / Ollama):'));
   info('  provider add NAME --kind X --model M [--api-key K] [--default]');
@@ -74,6 +76,8 @@ async function main(): Promise<number> {
       return restoreCommand(rest);
     case 'daemon':
       return daemonCommand(rest);
+    case 'update':
+      return updateCommand(rest);
     case 'provider':
       return providerCommand(rest);
     default:

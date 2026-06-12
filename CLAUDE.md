@@ -308,11 +308,41 @@ distinct compile/render path from registered apps.
 - The dashboard never sees an API key — keys live in sqlite, owned by the
   gateway process.
 
+## Events Subsystem (cross-app communication)
+
+In-memory pub/sub event bus (`packages/core/registry/eventBus.ts`, singleton
+`appEventBus`) lets apps talk to each other. Events are typed `sourceApp:name`;
+patterns support exact, `ns:*`, and `*`. **Client-local / per-tab** — events do
+not sync across tabs or devices.
+
+- **Custom (vibe-coded) apps** receive an `events` prop from
+  `DynamicAppRenderer.tsx`: `events.emit(name, data)` fires `<thisAppId>:name`;
+  `events.on(pattern, handler)` returns an unsubscribe fn (subscribe inside a
+  `useEffect` — the renderer also auto-drains subscriptions on unmount/recompile).
+  The authoring contract is documented in `packages/server/src/agent/session.ts`.
+- **Built-in plugins** get `emit`/`subscribe` on their `AppContext` (AI function
+  handlers + `events.listens`). Discovery via `getAllEmittedEvents()` /
+  `getAllEventListeners()` / `getAllAIFunctions()` (registry — built-ins only).
+- **Event links** (automations) live in `state.eventLinks` (`EventLink[]`),
+  engine in `packages/core/services/ai/eventLinks.ts`. `executeEventLinkAction`
+  routes built-in targets via the registry and custom-app targets via
+  `handleCustomAppFunction` (target named `{appNameSanitized}_{fn}`).
+- **Always-on wiring** lives in `WebDashboard.tsx` (a top-level `useEffect`
+  calling `aiService.registerAppActions` → `initializeEventListeners` →
+  `registerDynamicEventLinks`), NOT in the AIAssistant tile — so links fire
+  regardless of which tiles are placed.
+- **EVENTS SUBSYSTEM overlay** (`packages/core/apps/EventsSubsystem/`, opened with
+  **⌘B / Ctrl+B**): live bus monitor + event-link list/toggle/delete + a create-link
+  builder. This is the UI for managing automations (replaces doing it via AI chat).
+  Note: command id `open-events` must stay in CommandPalette's `SELF_CLOSING` set,
+  else the palette closes the overlay the instant it opens.
+
 ## Web Dashboard (Spaces)
 - Grid: 2-6 columns, 4/6/8/12 rows
 - Drag title bar to reposition
 - Drag edges/corners to resize
 - ⌘K: Command palette
+- ⌘J: Agentic Coder · ⌘I: Scheduler · **⌘B / Ctrl+B: Events Subsystem**
 - ⌘1-9: Switch spaces
 - Title bar shows: App title, ⚡ (AI functions + queryable data), ⚙ (settings), × (close)
 

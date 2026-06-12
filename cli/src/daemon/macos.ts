@@ -90,6 +90,28 @@ export function uninstallMacos(): boolean {
   return true;
 }
 
+// Stop/start without removing the plist — used by `dashterm update` to take
+// the gateway down for the rebuild, then bring it back up. `bootout` unloads
+// the job (returns non-zero if it wasn't loaded — fine, we want it stopped);
+// `bootstrap` reloads + starts it from the existing plist.
+export function stopMacos(): boolean {
+  const uid = process.getuid?.() ?? -1;
+  if (uid < 0) return false;
+  spawnSync('launchctl', ['bootout', `gui/${uid}/${MACOS_AGENT_LABEL}`], { stdio: 'ignore' });
+  return true;
+}
+
+export function startMacos(): boolean {
+  const plist = macosPlistPath();
+  if (!fs.existsSync(plist)) return false;
+  const uid = process.getuid?.() ?? -1;
+  if (uid < 0) return false;
+  const res = spawnSync('launchctl', ['bootstrap', `gui/${uid}`, plist], {
+    stdio: ['ignore', 'pipe', 'pipe'],
+  });
+  return res.status === 0;
+}
+
 export interface MacosStatus {
   pid: number | null;
   lastExitCode: number | null;
