@@ -5,6 +5,8 @@ import { useAuth } from "../core/hooks/useAuth";
 import { registerAllApps } from "../core/apps";
 import LoginPage from "../core/components/common/LoginPage";
 import PasswordResetScreen from "../core/components/common/PasswordResetScreen";
+import UpdatingModal from "../core/components/common/UpdatingModal";
+import { useUpdateProgress } from "../core/hooks/useUpdateProgress";
 import WebDashboard from "./layouts/WebDashboard";
 
 registerAllApps();
@@ -43,6 +45,14 @@ export default function App() {
   } = useRealtimeStateWithAuth();
 
   const { mustResetPassword } = useAuth();
+
+  // An in-flight self-update takes over the whole screen — BEFORE the auth gate.
+  // The gateway is down during the rebuild, so auth checks fail; without this,
+  // that spurious "signed out" would drop the user to the login page mid-update.
+  const update = useUpdateProgress();
+  if (update.active) {
+    return <UpdatingModal phase={update.phase} target={update.target} onDismiss={update.dismiss} />;
+  }
 
   if (!isAuthenticated) {
     return <LoginPage />;

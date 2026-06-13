@@ -11,6 +11,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { storage } from '../storage';
 import type { UpdateStatus } from '../storage/types';
+import { beginUpdate } from '../services/updateProgress';
 
 const DISMISS_KEY = 'dashterm:update-banner-dismissed:v1';
 
@@ -40,10 +41,14 @@ export function useUpdateStatus(): UseUpdateStatus {
   useEffect(() => storage.subscribeUpdate(setStatus), []);
 
   // Mirror the gateway's own `running` flag (an update started elsewhere, or
-  // already in flight when this tab loaded).
+  // already in flight when this tab loaded) and raise the blocking modal so
+  // observer tabs/devices don't just see the gateway vanish.
   useEffect(() => {
-    if (status?.running) setRunning(true);
-  }, [status?.running]);
+    if (status?.running) {
+      setRunning(true);
+      beginUpdate(status.latestVersion ?? status.currentVersion ?? '');
+    }
+  }, [status?.running, status?.latestVersion, status?.currentVersion]);
 
   const dismiss = useCallback(() => {
     const v = status?.latestVersion;
@@ -61,11 +66,14 @@ export function useUpdateStatus(): UseUpdateStatus {
     setRunning(true);
     try {
       await storage.runUpdate();
+      // Raise the full-screen modal immediately — the gateway is about to go
+      // down for the rebuild, so this bridges the outage + page reloads.
+      beginUpdate(status?.latestVersion ?? '');
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
       setRunning(false);
     }
-  }, []);
+  }, [status?.latestVersion]);
 
   const dismissed = !!status?.latestVersion && dismissedVersion === status.latestVersion;
   const visible = !!(status && status.supported && status.available && !dismissed);
