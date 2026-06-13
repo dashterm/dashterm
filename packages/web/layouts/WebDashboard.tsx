@@ -32,6 +32,7 @@ import { useKeyboardShortcut } from "../../core/hooks/useKeyboardShortcut";
 import { useOverlayShortcuts } from "../../core/hooks/useOverlayShortcuts";
 import OverlayHost from "../../core/components/overlays/OverlayHost";
 import UpdateBanner from "../../core/components/common/UpdateBanner";
+import { storage } from "../../core/storage";
 import { useAuth } from "../../core/hooks/useAuth";
 import { styles } from "./WebDashboard/styles";
 import { useGridDragDrop } from "./WebDashboard/useGridDragDrop";
@@ -125,6 +126,20 @@ export default function WebDashboard({
     const today = new Date();
     return today.toISOString().split('T')[0];
   });
+
+  // The actual running release (git tag, via /api/update/status) for the header.
+  // One-shot: it only changes across a self-update, which reloads the page.
+  // Falls back to the Expo config version if the gateway can't report it.
+  const [gatewayVersion, setGatewayVersion] = useState<string | null>(null);
+  useEffect(() => {
+    let alive = true;
+    storage
+      .getUpdateStatus()
+      .then((s) => { if (alive) setGatewayVersion(s.currentVersion); })
+      .catch(() => { /* keep the Expo-version fallback */ });
+    return () => { alive = false; };
+  }, []);
+  const displayVersion = gatewayVersion || Constants.expoConfig?.version || '0.0.1';
 
   // Get app settings with defaults
   const appSettings = state?.webLayout?.appSettings || { dateFormat: 'US' as const };
@@ -493,7 +508,7 @@ export default function WebDashboard({
       {/* Header with Space Tabs */}
       <View style={[styles.header, { height: HEADER_HEIGHT }]}>
         <View style={styles.headerLeft}>
-          <Text style={styles.title}>DASHTERM v{Constants.expoConfig?.version || '0.0.1'}</Text>
+          <Text style={styles.title}>DASHTERM v{displayVersion}</Text>
         </View>
 
         {/* Space Tabs */}
