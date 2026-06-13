@@ -120,7 +120,6 @@ export default function WebDashboard({
   const [editingSpaceName, setEditingSpaceName] = useState<string | null>(null);
   const [newSpaceName, setNewSpaceName] = useState("");
   const [spaceSettingsVisible, setSpaceSettingsVisible] = useState(false);
-  const [appSettingsVisible, setAppSettingsVisible] = useState(false);
   const [settingsMenuVisible, setSettingsMenuVisible] = useState(false);
   const [selectedDate, setSelectedDate] = useState(() => {
     const today = new Date();
@@ -395,6 +394,8 @@ export default function WebDashboard({
         appActions={appActionsWithExtras}
         updateCustomAppState={updateCustomAppState}
         selectedDate={activeSpace.settings?.showDatePicker ? selectedDate : undefined}
+        appSettings={appSettings}
+        updateAppSettings={updateAppSettings}
         apiBase={apiBase}
       />
     );
@@ -572,15 +573,6 @@ export default function WebDashboard({
           {userProfile && (
             <Text style={styles.user}>{userProfile.displayName}</Text>
           )}
-          {systemSpace && (
-            <Pressable
-              style={[styles.gearBtn, isSystemActive && styles.gearBtnActive]}
-              onPress={() => switchSpace(systemSpace.id)}
-              accessibilityLabel="Open settings"
-            >
-              <Text style={[styles.gearBtnText, isSystemActive && styles.gearBtnTextActive]}>⚙</Text>
-            </Pressable>
-          )}
           <View style={{ position: 'relative' }}>
             <Pressable
               style={styles.settingsMenuBtn}
@@ -601,15 +593,17 @@ export default function WebDashboard({
                     SPACE SETTINGS ({activeSpace.name})
                   </Text>
                 </Pressable>
-                <Pressable
-                  style={styles.settingsMenuItem}
-                  onPress={() => {
-                    setSettingsMenuVisible(false);
-                    setAppSettingsVisible(true);
-                  }}
-                >
-                  <Text style={styles.settingsMenuItemText}>APP SETTINGS</Text>
-                </Pressable>
+                {systemSpace && (
+                  <Pressable
+                    style={styles.settingsMenuItem}
+                    onPress={() => {
+                      setSettingsMenuVisible(false);
+                      switchSpace(systemSpace.id);
+                    }}
+                  >
+                    <Text style={styles.settingsMenuItemText}>APP SETTINGS</Text>
+                  </Pressable>
+                )}
                 <View style={styles.settingsMenuDivider} />
                 <Pressable
                   style={styles.settingsMenuItem}
@@ -633,7 +627,7 @@ export default function WebDashboard({
         {isSystemActive && (
           <View style={styles.systemBanner}>
             <Text style={styles.systemBannerText}>
-              ⚙ SYSTEM · SETTINGS — manage users, AI providers, and secrets
+              ⚙ SYSTEM · SETTINGS — manage users, AI providers, secrets, and preferences
             </Text>
           </View>
         )}
@@ -784,54 +778,6 @@ export default function WebDashboard({
                           ]}
                         >
                           {rows}
-                        </Text>
-                      </Pressable>
-                    ))}
-                  </View>
-                </View>
-              </View>
-            </View>
-          </View>
-        )}
-
-        {/* App Settings Modal */}
-        {appSettingsVisible && (
-          <View style={styles.modalOverlay}>
-            <View style={styles.settingsModal}>
-              <View style={styles.settingsModalHeader}>
-                <Text style={styles.settingsModalTitle}>APP SETTINGS</Text>
-                <Pressable onPress={() => setAppSettingsVisible(false)}>
-                  <Text style={styles.settingsModalClose}>×</Text>
-                </Pressable>
-              </View>
-              <View style={styles.settingsModalContent}>
-                {/* Date Format Setting */}
-                <View style={styles.settingsSection}>
-                  <Text style={styles.settingsSectionLabel}>DATE FORMAT</Text>
-                  <View style={styles.dateFormatOptions}>
-                    {[
-                      { value: 'US', label: 'US (January 3, 2026)' },
-                      { value: 'UK', label: 'UK (3 January 2026)' },
-                      { value: 'ISO', label: 'ISO (2026-01-03)' },
-                    ].map((option) => (
-                      <Pressable
-                        key={option.value}
-                        style={[
-                          styles.dateFormatOption,
-                          appSettings.dateFormat === option.value && styles.dateFormatOptionActive,
-                        ]}
-                        onPress={() => updateAppSettings({ dateFormat: option.value as 'US' | 'UK' | 'ISO' })}
-                      >
-                        <View style={styles.dateFormatRadio}>
-                          {appSettings.dateFormat === option.value && (
-                            <View style={styles.dateFormatRadioInner} />
-                          )}
-                        </View>
-                        <Text style={[
-                          styles.dateFormatLabel,
-                          appSettings.dateFormat === option.value && styles.dateFormatLabelActive,
-                        ]}>
-                          {option.label}
                         </Text>
                       </Pressable>
                     ))}
@@ -1063,27 +1009,31 @@ export default function WebDashboard({
                       ) : null;
                     })()}
                   </div>
-                  <div style={{ display: "flex", gap: 4 }}>
-                    <button
-                      style={{
-                        padding: "2px 6px",
-                        backgroundColor: "rgba(0,0,0,0.1)",
-                        border: "none",
-                        borderRadius: 2,
-                        cursor: "pointer",
-                        fontFamily: "Courier New",
-                        fontSize: 12,
-                        color: "#ff6666",
-                      }}
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        removeAppFromSpace(activeSpace.id, appLayout.id);
-                      }}
-                      title="Remove from space"
-                    >
-                      ×
-                    </button>
-                  </div>
+                  {/* The reserved Settings space is fixed — its tiles can't be
+                      removed, so the × is hidden there. */}
+                  {!isSystemActive && (
+                    <div style={{ display: "flex", gap: 4 }}>
+                      <button
+                        style={{
+                          padding: "2px 6px",
+                          backgroundColor: "rgba(0,0,0,0.1)",
+                          border: "none",
+                          borderRadius: 2,
+                          cursor: "pointer",
+                          fontFamily: "Courier New",
+                          fontSize: 12,
+                          color: "#ff6666",
+                        }}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          removeAppFromSpace(activeSpace.id, appLayout.id);
+                        }}
+                        title="Remove from space"
+                      >
+                        ×
+                      </button>
+                    </div>
+                  )}
                 </div>
 
                 {/* App Content — small inset so the inner UI doesn't kiss the

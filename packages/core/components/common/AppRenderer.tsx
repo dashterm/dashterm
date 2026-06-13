@@ -11,7 +11,7 @@
 
 import React from 'react';
 import { Text, Platform } from 'react-native';
-import { SpaceAppLayout, UserProfile, SystemContext, EventLink, CustomApp } from '../../types';
+import { SpaceAppLayout, UserProfile, SystemContext, EventLink, CustomApp, AppSettings } from '../../types';
 import { getApp } from '../../registry';
 
 import AIAssistant from '../../apps/AIAssistant';
@@ -46,6 +46,9 @@ export interface AppRendererProps {
   updateCustomAppState?: (appId: string, updates: any) => void;
   // Selected date from space's date picker (YYYY-MM-DD format)
   selectedDate?: string;
+  // Dashboard-wide settings + setter, threaded to the system App Settings tile.
+  appSettings?: AppSettings;
+  updateAppSettings?: (settings: Partial<AppSettings>) => void;
   // Per-user relay API base for vibe-coded custom apps (derived from
   // AgenticCoder's relayUrl). Empty when the user hasn't configured a relay.
   apiBase: string;
@@ -60,6 +63,8 @@ export const AppRenderer: React.FC<AppRendererProps> = ({
   systemContext,
   appActions,
   selectedDate,
+  appSettings,
+  updateAppSettings,
   apiBase,
 }) => {
   const appType = appLayout.type;
@@ -89,6 +94,8 @@ export const AppRenderer: React.FC<AppRendererProps> = ({
         updateState={updateInstance}
         userProfile={userProfile}
         selectedDate={selectedDate}
+        appSettings={appSettings}
+        updateAppSettings={updateAppSettings}
       />
     );
   }

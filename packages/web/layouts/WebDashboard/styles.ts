@@ -113,25 +113,6 @@ export const styles = StyleSheet.create({
     color: '#00ffff',
     fontWeight: 'bold',
   },
-  gearBtn: {
-    borderWidth: 1,
-    borderColor: '#004444',
-    paddingHorizontal: 8,
-    paddingVertical: 3,
-    backgroundColor: '#001a1a',
-  },
-  gearBtnActive: {
-    borderColor: '#00ffff',
-    backgroundColor: '#00ffff',
-  },
-  gearBtnText: {
-    fontFamily: 'Courier New',
-    fontSize: 13,
-    color: '#00cccc',
-  },
-  gearBtnTextActive: {
-    color: '#0a0a0a',
-  },
   settingsMenu: {
     position: 'absolute',
     top: '100%',
@@ -398,48 +379,6 @@ export const styles = StyleSheet.create({
   },
   settingsToggleTextOff: {
     color: '#ff6666',
-  },
-  dateFormatOptions: {
-    gap: 8,
-  },
-  dateFormatOption: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingVertical: 8,
-    paddingHorizontal: 12,
-    backgroundColor: '#001a1a',
-    borderWidth: 1,
-    borderColor: '#004444',
-    borderRadius: 4,
-    marginBottom: 8,
-  },
-  dateFormatOptionActive: {
-    borderColor: '#00ffff',
-    backgroundColor: '#002222',
-  },
-  dateFormatRadio: {
-    width: 16,
-    height: 16,
-    borderRadius: 8,
-    borderWidth: 2,
-    borderColor: '#004444',
-    marginRight: 12,
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  dateFormatRadioInner: {
-    width: 8,
-    height: 8,
-    borderRadius: 4,
-    backgroundColor: '#00ffff',
-  },
-  dateFormatLabel: {
-    fontFamily: 'Courier New',
-    fontSize: 11,
-    color: '#888888',
-  },
-  dateFormatLabelActive: {
-    color: '#00ffff',
   },
   footer: {
     flexDirection: 'row',

@@ -19,15 +19,17 @@ import { schedulerPlugin } from './Scheduler/plugin';
 import { userManagementPlugin } from './UserManagement/plugin';
 import { aiProvidersPlugin } from './AIProviders/plugin';
 import { secretsPlugin } from './Secrets/plugin';
+import { appSettingsPlugin } from './AppSettings/plugin';
 
 export function registerAllApps() {
   registerApp(aiPlugin);
-  // The three settings tiles. They're flagged `system: true`, so the command
+  // The settings tiles. They're flagged `system: true`, so the command
   // palette hides them from its addable-app list — they live only in the
   // reserved Settings space (see ensureSystemSpace).
   registerApp(userManagementPlugin);
   registerApp(aiProvidersPlugin);
   registerApp(secretsPlugin);
+  registerApp(appSettingsPlugin);
   // AgenticCoder and Scheduler are NOT tile-able — they live as global
   // overlays opened via CMD-K (A / S). The plugin files exist so the
   // registry can resolve their type, but they're not registered for the
@@ -42,3 +44,4 @@ export { schedulerPlugin } from './Scheduler/plugin';
 export { userManagementPlugin } from './UserManagement/plugin';
 export { aiProvidersPlugin } from './AIProviders/plugin';
 export { secretsPlugin } from './Secrets/plugin';
+export { appSettingsPlugin } from './AppSettings/plugin';

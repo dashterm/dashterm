@@ -1,5 +1,5 @@
 import { ComponentType } from 'react';
-import { UserProfile } from '../types';
+import { UserProfile, AppSettings as GlobalAppSettings } from '../types';
 
 // ============================================
 // EVENT SYSTEM TYPES
@@ -146,6 +146,11 @@ export interface AppComponentProps {
   updateState: (updates: any) => void;
   userProfile: UserProfile | null;
   selectedDate?: string; // YYYY-MM-DD format, from space's date picker
+  // Dashboard-wide settings (date format). Threaded through for the system
+  // App Settings tile, which manages global prefs rather than instance state.
+  // Other apps ignore these.
+  appSettings?: GlobalAppSettings;
+  updateAppSettings?: (settings: Partial<GlobalAppSettings>) => void;
 }
 
 export interface AppDefinition<TState = any> {
