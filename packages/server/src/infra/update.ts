@@ -43,6 +43,12 @@ export interface UpdateStatus {
   checkedAt: number | null;
   /** last check error (offline / git failure); never blocks the gateway. */
   error: string | null;
+  /** GitHub release body (markdown) for latestVersion, if a release exists. */
+  releaseNotes: string | null;
+  /** GitHub release page URL for latestVersion. */
+  releaseUrl: string | null;
+  /** GitHub release title for latestVersion. */
+  releaseName: string | null;
 }
 
 // ---- semver (self-contained; no dependency) ----
@@ -139,6 +145,62 @@ function latestRemoteTag(root: string): { tag: string | null; error: string | nu
   return { tag: best, error: null };
 }
 
+// ---- GitHub release notes (enrichment; never the version source of truth) ----
+
+/** owner/repo from the origin remote (or DASHTERM_REPO_URL), if it's GitHub. */
+function githubSlug(root: string): string | null {
+  const env = process.env.DASHTERM_REPO_URL?.trim();
+  let url = env || '';
+  if (!url) {
+    const r = git(['remote', 'get-url', 'origin'], root);
+    if (r.ok) url = r.out;
+  }
+  const m = /github\.com[:/]([^/]+)\/(.+?)(?:\.git)?\/?$/.exec(url);
+  return m ? `${m[1]}/${m[2]}` : null;
+}
+
+interface ReleaseInfo {
+  name: string;
+  notes: string;
+  url: string;
+}
+
+/**
+ * The GitHub Release for an exact tag — used only to enrich the (ls-remote
+ * derived) latest version with notes + a link. Best-effort: a bare tag with no
+ * Release, a non-GitHub host, rate-limiting, or being offline all return null,
+ * and the banner still works without notes. global fetch is available on the
+ * Node 20+ the gateway requires.
+ */
+async function fetchReleaseByTag(slug: string, tag: string): Promise<ReleaseInfo | null> {
+  try {
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), GIT_TIMEOUT_MS);
+    let res: Response;
+    try {
+      res = await fetch(
+        `https://api.github.com/repos/${slug}/releases/tags/${encodeURIComponent(tag)}`,
+        {
+          headers: { Accept: 'application/vnd.github+json', 'User-Agent': 'dashterm-gateway' },
+          signal: ctrl.signal,
+        },
+      );
+    } finally {
+      clearTimeout(timer);
+    }
+    if (!res.ok) return null;
+    const j = (await res.json()) as { name?: unknown; body?: unknown; html_url?: unknown };
+    if (typeof j.html_url !== 'string') return null;
+    return {
+      name: typeof j.name === 'string' && j.name ? j.name : tag,
+      notes: typeof j.body === 'string' ? j.body : '',
+      url: j.html_url,
+    };
+  } catch {
+    return null;
+  }
+}
+
 // ---- environment detection ----
 
 function runningViaTsx(): boolean {
@@ -189,10 +251,10 @@ export function isUpdateRunning(config: GatewayConfig): boolean {
 
 let cache: UpdateStatus | null = null;
 
-export function getUpdateStatus(
+export async function getUpdateStatus(
   config: GatewayConfig,
   opts: { force?: boolean } = {},
-): UpdateStatus {
+): Promise<UpdateStatus> {
   const root = resolveRepoRoot(config);
   const running = isUpdateRunning(config);
   const canRestart = daemonInstalled();
@@ -207,6 +269,9 @@ export function getUpdateStatus(
     running,
     checkedAt: cache?.checkedAt ?? null,
     error: null,
+    releaseNotes: null,
+    releaseUrl: null,
+    releaseName: null,
   });
 
   if (runningViaTsx()) return unsupported('dev runtime (tsx)');
@@ -219,8 +284,17 @@ export function getUpdateStatus(
   }
 
   const cur = currentVersion(root);
+  // ls-remote stays the authoritative version source (host-agnostic, no rate
+  // limit); the GitHub API is only used to enrich the latest tag with notes.
   const { tag: latest, error } = latestRemoteTag(root);
   const available = !!(cur && latest && compareSemver(cur, latest) < 0);
+
+  let release: ReleaseInfo | null = null;
+  if (latest) {
+    const slug = githubSlug(root);
+    if (slug) release = await fetchReleaseByTag(slug, latest);
+  }
+
   cache = {
     supported: true,
     reason: null,
@@ -231,6 +305,9 @@ export function getUpdateStatus(
     running,
     checkedAt: Date.now(),
     error,
+    releaseNotes: release?.notes || null,
+    releaseUrl: release?.url || null,
+    releaseName: release?.name || null,
   };
   return cache;
 }
@@ -312,9 +389,9 @@ export function startUpdateChecker(
   config: GatewayConfig,
   onAvailable: (status: UpdateStatus) => void,
 ): void {
-  const tick = () => {
+  const tick = async () => {
     try {
-      const status = getUpdateStatus(config, { force: true });
+      const status = await getUpdateStatus(config, { force: true });
       if (
         status.supported &&
         status.available &&

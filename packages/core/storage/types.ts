@@ -93,6 +93,10 @@ export interface UpdateStatus {
   running: boolean;
   checkedAt: number | null;
   error: string | null;
+  // GitHub release notes (markdown), page URL, and title for latestVersion.
+  releaseNotes: string | null;
+  releaseUrl: string | null;
+  releaseName: string | null;
 }
 
 export interface StorageProvider {

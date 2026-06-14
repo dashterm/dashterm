@@ -17,8 +17,8 @@ import { requireUser } from './auth';
 import type { GatewayConfig } from '../config';
 import { getUpdateStatus, isUpdateRunning, launchUpdater } from '../infra/update';
 
-function withCanApply(config: GatewayConfig, isAdmin: boolean, force: boolean) {
-  const status = getUpdateStatus(config, { force });
+async function withCanApply(config: GatewayConfig, isAdmin: boolean, force: boolean) {
+  const status = await getUpdateStatus(config, { force });
   return { ...status, canApply: isAdmin && status.supported && status.canRestart };
 }
 
@@ -36,12 +36,15 @@ export async function registerUpdateRoutes(app: FastifyInstance, config: Gateway
     return withCanApply(config, true, true);
   });
 
+  // NOTE: getUpdateStatus is awaited below — it now also fetches GitHub release
+  // notes for the latest tag.
+
   app.post('/api/update/run', async (req, reply) => {
     const me = requireUser(req, reply, config);
     if (!me) return;
     if (me.is_admin !== 1) return reply.code(403).send({ error: 'admin only' });
 
-    const status = getUpdateStatus(config, { force: false });
+    const status = await getUpdateStatus(config, { force: false });
     if (!status.supported) {
       return reply.code(409).send({ error: 'updates not supported for this install', reason: status.reason });
     }
