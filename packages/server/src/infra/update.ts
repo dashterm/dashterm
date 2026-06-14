@@ -174,16 +174,24 @@ interface ReleaseInfo {
  */
 async function fetchReleaseByTag(slug: string, tag: string): Promise<ReleaseInfo | null> {
   try {
+    // Optional auth. Public repos (the OSS case) need no token. A token lets the
+    // gateway read notes from a PRIVATE repo and raises the rate limit
+    // (60 → 5000/hr). No token is ever embedded — it's read from the env.
+    const token =
+      process.env.DASHTERM_GITHUB_TOKEN?.trim() || process.env.GITHUB_TOKEN?.trim();
+    const headers: Record<string, string> = {
+      Accept: 'application/vnd.github+json',
+      'User-Agent': 'dashterm-gateway',
+    };
+    if (token) headers.Authorization = `Bearer ${token}`;
+
     const ctrl = new AbortController();
     const timer = setTimeout(() => ctrl.abort(), GIT_TIMEOUT_MS);
     let res: Response;
     try {
       res = await fetch(
         `https://api.github.com/repos/${slug}/releases/tags/${encodeURIComponent(tag)}`,
-        {
-          headers: { Accept: 'application/vnd.github+json', 'User-Agent': 'dashterm-gateway' },
-          signal: ctrl.signal,
-        },
+        { headers, signal: ctrl.signal },
       );
     } finally {
       clearTimeout(timer);
