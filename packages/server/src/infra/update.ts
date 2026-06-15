@@ -223,6 +223,16 @@ function daemonInstalled(): boolean {
     const xdg = process.env.XDG_CONFIG_HOME || path.join(os.homedir(), '.config');
     return fs.existsSync(path.join(xdg, 'systemd', 'user', 'dashterm-gateway.service'));
   }
+  if (process.platform === 'win32') {
+    // The CLI registers a "DashTerm Gateway" scheduled task whose action is
+    // this gateway.cmd; its presence is a cheap proxy for "daemon installed"
+    // (avoids spawning schtasks from the gateway just to gate a restart).
+    const dataDir =
+      process.env.DASHTERM_DATA_DIR ||
+      process.env.DASHTERM_HOME ||
+      path.join(os.homedir(), '.dashterm');
+    return fs.existsSync(path.join(dataDir, 'gateway.cmd'));
+  }
   return false;
 }
 

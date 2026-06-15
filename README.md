@@ -35,6 +35,38 @@ dashterm start          # seeds admin@localhost / changeme on first boot
 A single `npm install` at the root is enough — the postinstall hook
 builds `packages/server` + the CLI automatically.
 
+### Windows
+
+The `curl | bash` installer is macOS/Linux only, but DashTerm itself runs on
+Windows — install it from a checkout:
+
+```powershell
+git clone https://github.com/dashterm/dashterm.git
+cd dashterm
+npm install
+dashterm setup          # account + AI agents + autostart
+```
+
+`dashterm setup`'s **Start at login** step registers a per-user **Scheduled
+Task** (`"DashTerm Gateway"`) — the Windows analog of launchd/systemd, so it
+needs no admin rights. Manage it the same way as on the other platforms:
+
+```powershell
+dashterm daemon install     # register + start the task
+dashterm daemon status      # is it running?
+dashterm daemon logs        # tail ~/.dashterm/gateway.log
+dashterm daemon uninstall   # stop + remove the task
+```
+
+Notes for the Windows autostart:
+
+- It's a **per-user** task (runs while you're logged in). It does not keep the
+  gateway alive across a full logout the way a system service would — for an
+  always-on headless box, prefer Linux, or wire up a Windows Service yourself
+  pointing at `dashterm start`.
+- Prefer not to autostart? Skip that step and just run `dashterm start` in a
+  terminal when you want the gateway up.
+
 ## Setup
 
 After install, run the interactive setup wizard:
@@ -54,8 +86,9 @@ move, space to toggle, enter to confirm):
    installed and signed in (see [Pre-authorising Claude](#pre-authorising-claude)
    below) and guides you if it isn't.
 3. **Start at login** — toggles the autostart background service on or off
-   (launchd on macOS, systemd-user on Linux). Re-running `setup` reflects the
-   current state, so you can flip it back off later.
+   (launchd on macOS, systemd-user on Linux, a per-user Scheduled Task on
+   Windows). Re-running `setup` reflects the current state, so you can flip it
+   back off later.
 
 Then open **http://localhost:8765** and sign in.
 

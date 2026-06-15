@@ -4,16 +4,17 @@
  *
  * macOS:   ~/Library/LaunchAgents/com.dashterm.gateway.plist (launchd)
  * Linux:   ~/.config/systemd/user/dashterm-gateway.service  (systemd-user)
+ * Windows: "DashTerm Gateway" scheduled task → ~/.dashterm/gateway.cmd
  *
  * Install captures DASHTERM_DATA_DIR / DASHTERM_PORT / DASHTERM_BIND
  * at the moment it's run and bakes them into the unit so the daemon
  * starts the gateway the same way you'd start it by hand.
  *
  * Logs are tailed from DASHTERM_DATA_DIR/gateway.log + gateway.err.log
- * — the launchd plist / systemd unit redirect stdout/stderr there.
+ * — the launchd plist / systemd unit / gateway.cmd redirect stdout/stderr there.
  */
 
-import { spawn, spawnSync } from 'node:child_process';
+import { spawn } from 'node:child_process';
 import fs from 'node:fs';
 import { homedir } from 'node:os';
 import path from 'node:path';
@@ -110,6 +111,16 @@ export async function daemonLogsCommand(args: string[]): Promise<number> {
     info(c.gray('The gateway needs to have run at least once via the daemon.'));
     return 1;
   }
+  // Windows has no `tail`. Print the last 200 lines ourselves; `--follow`
+  // isn't supported there (note it and fall through to a one-shot dump).
+  if (process.platform === 'win32') {
+    if (followFlag) {
+      warn('--follow is not supported on Windows; printing the last 200 lines instead.');
+    }
+    const lines = fs.readFileSync(logFile, 'utf8').split(/\r?\n/);
+    process.stdout.write(lines.slice(-200).join('\n') + '\n');
+    return 0;
+  }
   const tailArgs = followFlag ? ['-n', '200', '-F', logFile] : ['-n', '200', logFile];
   const child = spawn('tail', tailArgs, { stdio: 'inherit' });
   return new Promise<number>((resolve) => {
@@ -155,7 +166,7 @@ async function daemonRestartCommand(): Promise<number> {
       warn('Couldn\'t fully tear down the existing daemon; continuing anyway.');
     }
   }
-  // Tiny pause so launchctl/systemctl finish releasing the unit.
-  spawnSync('sleep', ['1']);
+  // Tiny pause so launchctl/systemctl/schtasks finish releasing the unit.
+  await new Promise((resolve) => setTimeout(resolve, 1000));
   return daemonInstallCommand();
 }

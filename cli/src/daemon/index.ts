@@ -1,11 +1,11 @@
 /**
  * Cross-platform shim for the gateway daemon. Routes to launchd on
- * macOS, systemd-user on Linux. Windows + others currently bail with
- * an instructive error (run `dashterm start` in the foreground or set
- * up your own service manager).
+ * macOS, systemd-user on Linux, and Task Scheduler (schtasks) on
+ * Windows. Other platforms bail with an instructive error (run
+ * `dashterm start` in the foreground or set up your own service manager).
  *
  * The CLI layer (cli/src/commands/daemon.ts) calls into this module;
- * platform specifics live next to it (./macos, ./linux).
+ * platform specifics live next to it (./macos, ./linux, ./windows).
  */
 
 import fs from 'node:fs';
@@ -28,6 +28,15 @@ import {
   stopLinux,
   uninstallLinux,
 } from './linux';
+import {
+  installWindows,
+  isInstalledWindows,
+  startWindows,
+  statusWindows,
+  stopWindows,
+  uninstallWindows,
+  windowsScriptPath,
+} from './windows';
 
 export type { DaemonInstallEnv } from './macos';
 
@@ -61,6 +70,9 @@ export function installDaemon(env: DaemonInstallEnv): string {
   if (process.platform === 'linux') {
     return installLinux(nodeBin, dashtermBin, env);
   }
+  if (process.platform === 'win32') {
+    return installWindows(nodeBin, dashtermBin, env);
+  }
   throw new Error(
     `Daemon install isn't supported on ${process.platform}. Run \`dashterm start\` ` +
       `in the foreground, or set up your own service manager pointing at ${dashtermBin}.`,
@@ -70,12 +82,14 @@ export function installDaemon(env: DaemonInstallEnv): string {
 export function uninstallDaemon(): boolean {
   if (process.platform === 'darwin') return uninstallMacos();
   if (process.platform === 'linux') return uninstallLinux();
+  if (process.platform === 'win32') return uninstallWindows();
   return false;
 }
 
 export function isDaemonInstalled(): boolean {
   if (process.platform === 'darwin') return isInstalledMacos();
   if (process.platform === 'linux') return isInstalledLinux();
+  if (process.platform === 'win32') return isInstalledWindows();
   return false;
 }
 
@@ -83,6 +97,7 @@ export function isDaemonInstalled(): boolean {
 export function stopDaemon(): boolean {
   if (process.platform === 'darwin') return stopMacos();
   if (process.platform === 'linux') return stopLinux();
+  if (process.platform === 'win32') return stopWindows();
   return false;
 }
 
@@ -90,12 +105,14 @@ export function stopDaemon(): boolean {
 export function startDaemon(): boolean {
   if (process.platform === 'darwin') return startMacos();
   if (process.platform === 'linux') return startLinux();
+  if (process.platform === 'win32') return startWindows();
   return false;
 }
 
 export function daemonUnitPath(): string | null {
   if (process.platform === 'darwin') return macosPlistPath();
   if (process.platform === 'linux') return linuxUnitPath();
+  if (process.platform === 'win32') return windowsScriptPath();
   return null;
 }
 
@@ -130,6 +147,17 @@ export function daemonStatus(): DaemonStatus {
       unitPath,
       active: s?.active ?? null,
       pid: s?.pid ?? null,
+      raw: s?.raw ?? null,
+    };
+  }
+  if (process.platform === 'win32') {
+    const s = statusWindows();
+    return {
+      installed,
+      unitPath,
+      active: s?.active ?? null,
+      // schtasks /Query doesn't expose the worker PID; leave it unknown.
+      pid: null,
       raw: s?.raw ?? null,
     };
   }
