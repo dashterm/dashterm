@@ -36,6 +36,13 @@ export interface ChatToolCall {
   id: string;
   name: string;
   arguments: Record<string, unknown>;
+  // Opaque per-provider round-trip state captured from the model's response
+  // and replayed verbatim on the next turn. Adapters populate and consume
+  // this; the proxy and app authors never touch it. Gemini 2.5+/3.x stash
+  // a `thoughtSignature` here (required, or multi-step tool calls 400). The
+  // bag is deliberately provider-agnostic so Anthropic (thinking-block
+  // signatures, when extended thinking is enabled) can reuse the same path.
+  providerData?: Record<string, unknown>;
 }
 
 export interface ChatToolDef {

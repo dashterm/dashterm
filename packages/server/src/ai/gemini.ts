@@ -25,7 +25,10 @@ const DEFAULT_BASE = 'https://generativelanguage.googleapis.com/v1beta';
 interface GeminiTextPart { text: string }
 interface GeminiFunctionCall { name: string; args: Record<string, unknown> }
 interface GeminiFunctionResponse { name: string; response: { content: string } }
-interface GeminiFunctionCallPart { functionCall: GeminiFunctionCall }
+// thoughtSignature: opaque token Gemini 2.5+/3.x attaches to a functionCall
+// part. It MUST be replayed when the call is echoed back in history or the
+// next turn 400s with INVALID_ARGUMENT. Threaded through ChatToolCall.providerData.
+interface GeminiFunctionCallPart { functionCall: GeminiFunctionCall; thoughtSignature?: string }
 interface GeminiFunctionResponsePart { functionResponse: GeminiFunctionResponse }
 type GeminiPart = GeminiTextPart | GeminiFunctionCallPart | GeminiFunctionResponsePart;
 
@@ -52,6 +55,12 @@ function flattenContent(content: ChatMessage['content']): string {
 function toGemini(messages: ChatMessage[]): { system: string; contents: GeminiContent[] } {
   let system = '';
   const contents: GeminiContent[] = [];
+  // Gemini matches a functionResponse to its declaration by NAME, not by id.
+  // App authors send OpenAI-shape tool results ({ role:'tool', toolCallId })
+  // and may omit `name`; we recover it from the assistant's tool_calls so a
+  // result named only by id still resolves. Assistant turns always precede
+  // their tool results, so a single in-order pass populates this in time.
+  const toolNameById = new Map<string, string>();
   // Gemini wants every tool_use+tool_result pair attached to its adjacent
   // turn. We assemble contents by walking messages in order.
   let i = 0;
@@ -64,12 +73,14 @@ function toGemini(messages: ChatMessage[]): { system: string; contents: GeminiCo
       continue;
     }
     if (m.role === 'tool') {
+      const resolvedName =
+        m.name ?? (m.toolCallId ? toolNameById.get(m.toolCallId) : undefined) ?? m.toolCallId ?? 'tool';
       contents.push({
         role: 'user',
         parts: [
           {
             functionResponse: {
-              name: m.name ?? m.toolCallId ?? 'tool',
+              name: resolvedName,
               response: { content: flattenContent(m.content) },
             },
           },
@@ -84,7 +95,11 @@ function toGemini(messages: ChatMessage[]): { system: string; contents: GeminiCo
       if (text) parts.push({ text });
       if (m.toolCalls?.length) {
         for (const tc of m.toolCalls) {
-          parts.push({ functionCall: { name: tc.name, args: tc.arguments } });
+          if (tc.id) toolNameById.set(tc.id, tc.name);
+          const part: GeminiFunctionCallPart = { functionCall: { name: tc.name, args: tc.arguments } };
+          const sig = tc.providerData?.thoughtSignature;
+          if (typeof sig === 'string') part.thoughtSignature = sig;
+          parts.push(part);
         }
       }
       contents.push({ role: 'model', parts });
@@ -118,6 +133,9 @@ function fromGemini(resp: GeminiResponse, providerName: string, model: string): 
             id: `call_${idx}_${Date.now()}`,
             name: p.functionCall.name,
             arguments: p.functionCall.args,
+            ...(p.thoughtSignature
+              ? { providerData: { thoughtSignature: p.thoughtSignature } }
+              : {}),
           }))
         : undefined,
     },

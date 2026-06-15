@@ -133,6 +133,17 @@ export const useRealtimeStateWithAuth = () => {
             // users already get it from initialState). Idempotent.
             const ensuredState = ensureSystemSpace(newState);
 
+            // customApps is owned by the shared-apps subscription
+            // (subscribeApps → /api/apps), NOT by the persisted user appState.
+            // The appState row only carries a customApps snapshot incidentally
+            // (it's part of AppState), and that snapshot goes stale the moment
+            // an app is pushed or updated. Re-applying it here would clobber a
+            // just-pushed app — e.g. one the Agentic Coder created seconds ago —
+            // back out of the command palette until a full reload, because the
+            // coder overlay's own state writes echo back as state:changed and
+            // land in this handler. Keep whatever subscribeApps has loaded.
+            ensuredState.customApps = stateRef.current?.customApps ?? ensuredState.customApps;
+
             setState(ensuredState);
             stateRef.current = ensuredState;
 

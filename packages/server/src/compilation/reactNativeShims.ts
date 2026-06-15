@@ -145,7 +145,20 @@ const StyleSheet = {
 };
 
 // ============ HELPER FUNCTIONS ============
-const flattenStyle = (style) => Array.isArray(style) ? Object.assign({}, ...style.filter(Boolean)) : (style || {});
+// RN treats a numeric lineHeight as density-independent PIXELS, but the DOM
+// (and React's unitless-property list) reads a bare lineHeight number as a
+// MULTIPLIER -- so RN muscle memory like lineHeight:19 renders as 19x the
+// font size (~247px). Coerce numbers that look like pixel line heights (RN
+// values are >= the font size) to an explicit px string; leave small values
+// (<= 4) alone so a deliberate CSS multiplier like 1.4 still works. Clone only
+// when we actually change something -- the input is a shared StyleSheet entry.
+const normalizeRNStyle = (s) => {
+  if (s && typeof s.lineHeight === 'number' && s.lineHeight > 4) {
+    return { ...s, lineHeight: s.lineHeight + 'px' };
+  }
+  return s;
+};
+const flattenStyle = (style) => normalizeRNStyle(Array.isArray(style) ? Object.assign({}, ...style.filter(Boolean)) : (style || {}));
 
 // React Native's <View> is a flex container by default — column direction,
 // items stretch, do not shrink, position relative. Without these defaults the
@@ -572,6 +585,12 @@ if (typeof document !== 'undefined' && !document.getElementById('rn-shim-styles'
 //       { status, ok, headers, body }.
 //   dashterm.secrets.names()           — resolves to a string[] of your secret
 //       names (for building pickers); never returns values.
+//   dashterm.vars.get(name)            — resolves to the VALUE of a stored
+//       variable: non-secret config (a base URL, hostname, username) the user
+//       can see and edit. dashterm.vars.all() resolves to a { name: value }
+//       map; dashterm.vars.names() to a string[]. Use {{var.NAME}} in a
+//       secrets.fetch request to substitute one server-side, exactly like
+//       {{secret.NAME}}. Keep credentials in secrets, not vars.
 //   dashterm.ai.chat(messages, opts?)  — OpenAI-shaped chat routed to the
 //       provider bound to this app (or the default). Resolves to the gateway's
 //       chat response.
@@ -616,6 +635,24 @@ const dashterm = {
     names: function () {
       return __mfRequest('/api/secrets', { method: 'GET' }).then(function (d) {
         return d && d.secrets ? d.secrets.map(function (s) { return s.name; }) : [];
+      });
+    },
+  },
+  vars: {
+    all: function () {
+      return __mfRequest('/api/vars', { method: 'GET' }).then(function (d) {
+        var out = {};
+        var list = d && d.vars ? d.vars : [];
+        for (var i = 0; i < list.length; i++) { out[list[i].name] = list[i].value; }
+        return out;
+      });
+    },
+    get: function (name) {
+      return dashterm.vars.all().then(function (m) { return m[name]; });
+    },
+    names: function () {
+      return __mfRequest('/api/vars', { method: 'GET' }).then(function (d) {
+        return d && d.vars ? d.vars.map(function (v) { return v.name; }) : [];
       });
     },
   },

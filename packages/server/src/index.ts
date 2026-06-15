@@ -19,6 +19,7 @@ import { registerAppsRoutes } from './routes/apps';
 import { registerCompileRoutes } from './routes/compile';
 import { registerAiRoutes } from './routes/ai';
 import { registerSecretsRoutes } from './routes/secrets';
+import { registerVarsRoutes } from './routes/vars';
 import { registerWsRoutes } from './routes/ws';
 import { registerAgentRoutes } from './routes/agent';
 import { registerHostsRoutes } from './routes/hosts';
@@ -78,6 +79,7 @@ export async function createServer(
   await registerCompileRoutes(app);
   await registerAiRoutes(app, config);
   await registerSecretsRoutes(app, config);
+  await registerVarsRoutes(app, config);
   await registerAgentRoutes(app, config);
   await registerHostsRoutes(app, config);
   await registerAppBackendRoutes(app, config);

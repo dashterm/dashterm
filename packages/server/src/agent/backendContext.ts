@@ -20,7 +20,9 @@ import type { GatewayConfig } from '../config';
 import { listHosts, sshBinDir } from './sshHosts';
 import { getAppDb, type AppDb } from './appDb';
 import { getSecretsMap, listSecretNames } from '../secrets/registry';
+import { getVarsMap, listVars } from '../vars/registry';
 import { adapterFor, resolveProvider } from '../ai/registry';
+import { runAiLoop, type AiLoopOptions, type AiLoopResult } from '../ai/loop';
 import type { ChatRequest } from '../ai/types';
 
 export interface ExecResult {
@@ -45,8 +47,18 @@ export interface BackendCtx {
     names(): string[];
     map(): Record<string, string>;
   };
+  /** Readable config (non-secret), sibling to secrets — see vars/registry.ts. */
+  vars: {
+    get(name: string): string | undefined;
+    names(): string[];
+    map(): Record<string, string>;
+  };
   ai: {
     chat(messages: unknown[], opts?: { appId?: string; model?: string; [k: string]: unknown }): Promise<unknown>;
+    /** Server-side tool/agent loop: supply tool handlers, get back the final
+     *  reply + the steps taken. Owns the call→tool→call loop and every
+     *  provider's tool round-trip quirk so the app never re-implements it. */
+    run(opts: Omit<AiLoopOptions, 'appId'> & { appId?: string }): Promise<AiLoopResult>;
   };
   log(...args: unknown[]): void;
 }
@@ -97,6 +109,12 @@ export function buildBackendCtx(config: GatewayConfig, uid: string, shareCode: s
       map: () => getSecretsMap(uid),
     },
 
+    vars: {
+      get: (name) => getVarsMap(uid)[name],
+      names: () => listVars(uid).map((v) => v.name),
+      map: () => getVarsMap(uid),
+    },
+
     ai: {
       async chat(messages, opts) {
         const appId = typeof opts?.appId === 'string' ? opts.appId : undefined;
@@ -109,6 +127,12 @@ export function buildBackendCtx(config: GatewayConfig, uid: string, shareCode: s
           baseUrl: providerRow.base_url,
           providerName: providerRow.name,
         });
+      },
+      // Default the binding lookup to THIS app's share code, so an app that
+      // never passes appId still gets its own bound provider (falling back to
+      // the default). The owner can override per call.
+      run(opts) {
+        return runAiLoop({ ...opts, appId: opts.appId ?? shareCode });
       },
     },
 

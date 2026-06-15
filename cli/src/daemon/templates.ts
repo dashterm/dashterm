@@ -49,6 +49,7 @@ export const MACOS_PLIST_TEMPLATE = `<?xml version="1.0" encoding="UTF-8"?>
       <string>{{PORT}}</string>
       <key>DASHTERM_BIND</key>
       <string>{{BIND}}</string>
+      {{EXTRA_ENV}}
     </dict>
     <key>ProcessType</key>
     <string>Background</string>
@@ -67,6 +68,7 @@ Environment=DASHTERM_DATA_DIR={{DATA_DIR}}
 Environment=DASHTERM_PORT={{PORT}}
 Environment=DASHTERM_BIND={{BIND}}
 Environment=PATH=/usr/local/bin:/usr/bin:/bin
+{{EXTRA_ENV}}
 ExecStart={{NODE_BIN}} {{DASHTERM_BIN}} start
 WorkingDirectory={{HOME}}
 Restart=on-failure

@@ -32,6 +32,17 @@ export interface DaemonInstallEnv {
   port: string;
   bind: string;
   dataDir: string;
+  /** Optional GitHub token, baked into the unit env so the gateway can read
+   *  release notes from a PRIVATE repo. Omit for public repos. */
+  githubToken?: string;
+}
+
+function escapeXml(s: string): string {
+  return s
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;');
 }
 
 export function installMacos(
@@ -43,6 +54,9 @@ export function installMacos(
   fs.mkdirSync(path.dirname(plist), { recursive: true });
   fs.mkdirSync(dashtermHome(), { recursive: true, mode: 0o700 });
 
+  const extraEnv = env.githubToken
+    ? `<key>DASHTERM_GITHUB_TOKEN</key>\n      <string>${escapeXml(env.githubToken)}</string>`
+    : '';
   const body = renderTemplate(MACOS_PLIST_TEMPLATE, {
     NODE_BIN: nodeBin,
     DASHTERM_BIN: dashtermBin,
@@ -52,8 +66,10 @@ export function installMacos(
     BIND: env.bind,
     LOG_PATH: gatewayLogPath(),
     ERR_LOG_PATH: gatewayErrLogPath(),
+    EXTRA_ENV: extraEnv,
   });
-  fs.writeFileSync(plist, body, { mode: 0o644 });
+  // A baked-in token is a secret — keep the plist owner-only in that case.
+  fs.writeFileSync(plist, body, { mode: env.githubToken ? 0o600 : 0o644 });
 
   const uid = process.getuid?.() ?? -1;
   if (uid >= 0) {

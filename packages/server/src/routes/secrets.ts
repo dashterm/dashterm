@@ -26,8 +26,11 @@ import {
   listSecretNames,
   upsertSecret,
 } from '../secrets/registry';
+import { getVarsMap } from '../vars/registry';
 
-const PLACEHOLDER = /\{\{\s*secret\.([A-Za-z0-9_]+)\s*\}\}/g;
+// Two namespaces share the proxy: {{secret.NAME}} (write-only credentials) and
+// {{var.NAME}} (readable config). Each resolves from its own store.
+const PLACEHOLDER = /\{\{\s*(secret|var)\.([A-Za-z0-9_]+)\s*\}\}/g;
 const MAX_RESPONSE_BYTES = 5 * 1024 * 1024; // 5 MiB
 const PROXY_TIMEOUT_MS = 30_000;
 
@@ -37,14 +40,20 @@ function validName(name: string): boolean {
 }
 
 /**
- * Replace every {{secret.NAME}} in `text` with the caller's value.
- * Collects any names that aren't in the vault so the caller fails loudly
- * instead of sending an empty credential upstream.
+ * Replace every {{secret.NAME}} / {{var.NAME}} in `text` with the caller's
+ * value from the matching store. Collects any names that aren't present (as
+ * "secret.NAME" / "var.NAME") so the caller fails loudly instead of sending an
+ * empty credential upstream.
  */
-function substitute(text: string, secrets: Record<string, string>, unknown: Set<string>): string {
-  return text.replace(PLACEHOLDER, (_m, name: string) => {
-    if (Object.prototype.hasOwnProperty.call(secrets, name)) return secrets[name];
-    unknown.add(name);
+function substitute(
+  text: string,
+  values: { secret: Record<string, string>; var: Record<string, string> },
+  unknown: Set<string>,
+): string {
+  return text.replace(PLACEHOLDER, (_m, ns: 'secret' | 'var', name: string) => {
+    const map = values[ns];
+    if (Object.prototype.hasOwnProperty.call(map, name)) return map[name];
+    unknown.add(`${ns}.${name}`);
     return '';
   });
 }
@@ -121,25 +130,25 @@ export async function registerSecretsRoutes(app: FastifyInstance, config: Gatewa
       return reply.code(400).send({ error: 'url is required' });
     }
 
-    const secrets = getSecretsMap(me.id);
+    const values = { secret: getSecretsMap(me.id), var: getVarsMap(me.id) };
     const unknown = new Set<string>();
 
-    const url = substitute(b.url, secrets, unknown);
+    const url = substitute(b.url, values, unknown);
     const method = (b.method || 'GET').toUpperCase();
     const headers: Record<string, string> = {};
     for (const [k, v] of Object.entries(b.headers ?? {})) {
-      if (typeof v === 'string') headers[k] = substitute(v, secrets, unknown);
+      if (typeof v === 'string') headers[k] = substitute(v, values, unknown);
     }
     let outBody: string | undefined;
     if (b.body !== undefined && b.body !== null && method !== 'GET' && method !== 'HEAD') {
       const raw = typeof b.body === 'string' ? b.body : JSON.stringify(b.body);
-      outBody = substitute(raw, secrets, unknown);
+      outBody = substitute(raw, values, unknown);
     }
 
     if (unknown.size > 0) {
       return reply
         .code(400)
-        .send({ error: `unknown secret(s): ${[...unknown].join(', ')}` });
+        .send({ error: `unknown placeholder(s): ${[...unknown].join(', ')}` });
     }
 
     let target: URL;

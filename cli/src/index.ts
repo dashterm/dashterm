@@ -4,6 +4,8 @@ import { onboardCommand } from './commands/onboard';
 import { daemonCommand } from './commands/daemon';
 import { updateCommand } from './commands/update';
 import { providerCommand } from './commands/provider';
+import { appCommand } from './commands/app';
+import { varsCommand, secretsCommand, hostsCommand } from './commands/inspect';
 import { backupCommand, restoreCommand } from './commands/backup';
 import {
   addUserCommand,
@@ -45,6 +47,13 @@ function help(): number {
   info('  provider unbind APP_ID         drop the binding');
   info('  provider binding [APP_ID]      see which provider resolves for an app');
   info('');
+  info(c.bold('Discovery + self-test (handy for the agentic coder):'));
+  info('  vars list [--user EMAIL]       list readable variables ({{var.NAME}})');
+  info('  secrets list [--user EMAIL]    list secret NAMES (values never shown)');
+  info('  hosts list [--user EMAIL]      list configured SSH host aliases');
+  info('  app list                       pushed apps + share codes');
+  info("  app invoke <app> [M] <path>    run an app backend headlessly (owner ctx, no auth)");
+  info('');
   return 0;
 }
 
@@ -80,6 +89,14 @@ async function main(): Promise<number> {
       return updateCommand(rest);
     case 'provider':
       return providerCommand(rest);
+    case 'app':
+      return appCommand(rest);
+    case 'vars':
+      return varsCommand(rest);
+    case 'secrets':
+      return secretsCommand(rest);
+    case 'hosts':
+      return hostsCommand(rest);
     default:
       error(`Unknown command: ${raw}`);
       help();
