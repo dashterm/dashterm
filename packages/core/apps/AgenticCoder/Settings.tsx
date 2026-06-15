@@ -39,8 +39,8 @@ export default function AgenticCoderSettings({ state, updateState, onClose }: Ap
       <Text style={styles.label}>DASHTERM URL</Text>
       <Text style={styles.help}>
         WebSocket endpoint of your dashterm container. Examples:{'\n'}
-        {'  '}wss://docker.taild2eda4.ts.net/dashterm{'\n'}
-        {'  '}ws://192.168.20.201:18790{'\n'}
+        {'  '}wss://your-host.example.com/dashterm{'\n'}
+        {'  '}ws://192.168.1.10:18790{'\n'}
         Leave blank to use the EXPO_PUBLIC_DASHTERM_URL build default.
       </Text>
       <TextInput

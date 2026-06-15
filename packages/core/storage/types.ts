@@ -30,9 +30,6 @@ export interface AuthUser {
 
 export interface SignInResult {
   user: AuthUser;
-  // Provider-specific OAuth access token (Google Gmail/Calendar scopes etc).
-  // Callers that need it know which provider they're on.
-  oauthAccessToken: string | null;
 }
 
 export interface AuthProvider {
@@ -42,14 +39,6 @@ export interface AuthProvider {
 
   // Bearer token for calling our own backend (/api/cli/*, etc).
   getIdToken(forceRefresh?: boolean): Promise<string | null>;
-
-  // Sign in with a credential already obtained from the OAuth flow.
-  // Used by the mobile path (expo-auth-session returns id_token + access_token).
-  signInWithGoogleCredential(idToken: string, accessToken: string | null): Promise<SignInResult>;
-
-  // Sign in via the provider's own OAuth flow (web popup / redirect).
-  // Returns the user once the flow completes.
-  signInWithGooglePopup(scopes: string[]): Promise<SignInResult>;
 
   // Email + password — the default first-login path. Signup is operator-
   // mediated (`dashterm add-user`), so there's no signUp method here.

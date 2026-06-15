@@ -151,7 +151,7 @@ export interface WebLayoutState {
 
 export interface GridAppLayout {
   id: string;
-  type: 'demo' | 'workout' | 'todo' | 'ai' | 'countdown' | 'pomodoro' | 'habit' | 'ticker' | 'weather' | 'portfolio' | 'gmail' | 'calendar' | 'custom';
+  type: 'demo' | 'workout' | 'todo' | 'ai' | 'countdown' | 'pomodoro' | 'habit' | 'ticker' | 'weather' | 'portfolio' | 'custom';
   height: number; // Height in grid units
   column: number; // Column index (0-based)
   order: number; // Order within column

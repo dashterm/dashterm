@@ -2,7 +2,7 @@
  * App Registry - Central configuration for all available apps
  */
 
-export type AppType = 'ai' | 'demo' | 'workout' | 'todo' | 'countdown' | 'pomodoro' | 'habit' | 'ticker' | 'weather' | 'portfolio' | 'gmail' | 'calendar';
+export type AppType = 'ai' | 'demo' | 'workout' | 'todo' | 'countdown' | 'pomodoro' | 'habit' | 'ticker' | 'weather' | 'portfolio';
 
 export interface AppMetadata {
   key: AppType;
@@ -98,22 +98,6 @@ export const APP_REGISTRY: Record<AppType, AppMetadata> = {
     keywords: ['portfolio', 'investment', 'holdings', 'stocks', 'crypto', 'assets', 'trading', 'gains', 'losses'],
     defaultHeight: 6,
     minHeight: 5,
-  },
-  gmail: {
-    key: 'gmail',
-    title: 'GMAIL',
-    description: 'View your Gmail inbox with unread count and recent emails',
-    keywords: ['gmail', 'email', 'mail', 'inbox', 'messages', 'unread'],
-    defaultHeight: 6,
-    minHeight: 4,
-  },
-  calendar: {
-    key: 'calendar',
-    title: 'CALENDAR',
-    description: 'View and create Google Calendar events',
-    keywords: ['calendar', 'events', 'schedule', 'meetings', 'appointments', 'google calendar'],
-    defaultHeight: 6,
-    minHeight: 4,
   },
 };
 

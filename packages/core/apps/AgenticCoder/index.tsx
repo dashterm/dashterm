@@ -900,7 +900,7 @@ export default function AgenticCoder({ appState, onUpdate, relatedWorkspaceNames
         <View style={styles.picker}>
           <Text style={styles.label}>+-- DASHTERM URL --+</Text>
           <Text style={styles.help}>
-            {`Examples:\n  wss://docker.taild2eda4.ts.net/dashterm\n  ws://192.168.20.201:18790`}
+            {`Examples:\n  wss://your-host.example.com/dashterm\n  ws://192.168.1.10:18790`}
           </Text>
           <View style={styles.newRow}>
             <Text style={styles.prompt}>+</Text>

@@ -171,19 +171,11 @@ export class DashTermApiAuthProvider implements AuthProvider {
     return null;
   }
 
-  async signInWithGoogleCredential(): Promise<SignInResult> {
-    throw new Error('Google sign-in is not supported on the native backend. Use email + password.');
-  }
-
-  async signInWithGooglePopup(): Promise<SignInResult> {
-    throw new Error('Google sign-in is not supported on the native backend. Use email + password.');
-  }
-
   async signInWithPassword(email: string, password: string): Promise<SignInResult> {
     const r = await http<{ user: ApiUser }>('POST', '/api/auth/signin', { email, password });
     const user = toAuthUser(r.user);
     this.setUser(user);
-    return { user, oauthAccessToken: null };
+    return { user };
   }
 
   async updatePassword(newPassword: string): Promise<void> {
