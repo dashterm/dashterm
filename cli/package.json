@@ -3,6 +3,7 @@
   "version": "0.2.0",
   "description": "DashTerm CLI — boot the local gateway, manage users + AI providers, drive the autostart daemon.",
   "private": true,
+  "license": "SEE LICENSE IN LICENSE",
   "bin": {
     "dashterm": "./dist/index.js"
   },
@@ -14,9 +15,11 @@
     "start": "node dist/index.js"
   },
   "engines": {
-    "node": ">=20"
+    "node": ">=20.19"
   },
-  "dependencies": {},
+  "dependencies": {
+    "@clack/prompts": "^1.5.1"
+  },
   "devDependencies": {
     "@types/node": "^20.11.0",
     "tsx": "^4.21.0",

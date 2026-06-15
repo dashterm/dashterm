@@ -48,15 +48,17 @@ same gateway.
 
 ### Why a CLA?
 
-Apache 2.0 already permits anyone (including the project maintainer) to use
-contributed code in proprietary products. The CLA exists for one additional
-reason: it grants Beren the right to **relicense** the project later
-(e.g., dual-licensing under a commercial license). Without it, a future
-relicense would require re-contacting every contributor.
+DashTerm is released under the [Functional Source License](./LICENSE)
+(`FSL-1.1-ALv2`), which reserves competing commercial use to the maintainer and
+converts to Apache 2.0 two years after each release. The CLA grants Beren a
+license-back to your contribution so the project can:
 
-The CLA is a fairly standard Apache-style ICLA with an added license-back
-to the project maintainer. It does not assign your copyright — you retain
-full ownership of your work.
+- offer DashTerm commercially and in the proprietary mobile app, and
+- **relicense** later (e.g., dual-licensing, or moving to a more permissive
+  license) without having to re-contact every contributor.
+
+It does not assign your copyright — you retain full ownership of your work, and
+the open-source license you grant under Sections 2–3 of the CLA is irrevocable.
 
 ## Style
 

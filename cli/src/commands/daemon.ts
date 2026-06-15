@@ -28,20 +28,15 @@ import { gatewayErrLogPath, gatewayLogPath } from '../daemon/paths';
 import { c, error, info, success, warn } from '../lib/log';
 
 function resolveEnv(): DaemonInstallEnv {
-  // Forward a GitHub token into the unit env if one is set at install time, so
-  // the gateway can read release notes from a PRIVATE repo. Public repos need
-  // none; removable at go-live (reinstall without the var set).
-  const githubToken = (
-    process.env.DASHTERM_GITHUB_TOKEN ??
-    process.env.GITHUB_TOKEN ??
-    ''
-  ).trim();
+  const agentEnabled = ['1', 'true', 'yes'].includes(
+    (process.env.DASHTERM_AGENT_ENABLED ?? '').toLowerCase(),
+  );
   return {
     port: process.env.DASHTERM_PORT ?? '8765',
     bind: process.env.DASHTERM_BIND ?? '127.0.0.1',
     dataDir:
       process.env.DASHTERM_DATA_DIR ?? path.join(homedir(), '.dashterm'),
-    ...(githubToken ? { githubToken } : {}),
+    ...(agentEnabled ? { agentEnabled } : {}),
   };
 }
 
@@ -58,9 +53,6 @@ export async function daemonInstallCommand(): Promise<number> {
     info(`  port     : ${env.port}`);
     info(`  bind     : ${env.bind}`);
     info(`  logs     : ${gatewayLogPath()}`);
-    if (env.githubToken) {
-      info(`  github   : token set (private-repo release notes)`);
-    }
     info('');
     info('The gateway will start now and on every login.');
     info(c.gray('  status: `dashterm daemon status`'));

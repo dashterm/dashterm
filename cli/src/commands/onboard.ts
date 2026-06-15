@@ -1,24 +1,27 @@
 /**
- * `dashterm onboard` — first-boot setup for the native install.
+ * `dashterm onboard` (alias `dashterm setup`) — first-boot setup for the
+ * native install.
  *
- * Run once after `curl install.sh | bash`. Walks the operator through
- * creating the admin account, then prints how to start the gateway.
- * Idempotent: re-running on an installed system tells you that and
- * exits cleanly.
+ * Interactive (a TTY, no --email/--password): a clack wizard that
+ *   1. creates the admin account (only if no users exist yet),
+ *   2. lets you tick the AI coding agents to enable (spacebar) — Claude Code
+ *      today, Codex / Grok Build shown greyed-out as "coming soon",
+ *   3. checks that Claude is installed + pre-authorised and guides you if not,
+ *   4. toggles "start at login" (the autostart daemon) on/off.
+ * Re-running on an installed system skips account creation but still lets you
+ * flip the agent / autostart toggles.
  *
- * Non-interactive mode (for install.sh / CI):
- *   --email <addr> --password <pw>  [--data-dir <path>]
- *
- * Daemon install is intentionally NOT part of this command yet —
- * `--install-daemon` lands in a future chunk alongside the launchd /
- * systemd-user units.
+ * Non-interactive (for install.sh / CI):
+ *   --email <addr> --password <pw> [--data-dir <path>] [--install-daemon]
  */
 
 import { randomUUID } from 'node:crypto';
 import { homedir } from 'node:os';
 import path from 'node:path';
-import { installDaemon } from '../daemon';
+import * as p from '@clack/prompts';
+import { installDaemon, isDaemonInstalled, uninstallDaemon } from '../daemon';
 import { gatewayLogPath } from '../daemon/paths';
+import { type ClaudeStatus, detectClaude, summariseClaude } from '../lib/claude-auth';
 import { c, error, info, success, warn } from '../lib/log';
 
 interface OnboardFlags {
@@ -26,7 +29,7 @@ interface OnboardFlags {
   password?: string;
   dataDir?: string;
   installDaemon: boolean;
-  yes: boolean; // future: non-interactive mode
+  yes: boolean;
 }
 
 function parseFlags(args: string[]): OnboardFlags {
@@ -73,6 +76,7 @@ interface ServerModule {
   };
   hashPassword: (pw: string) => Promise<string>;
 }
+type Db = ReturnType<ServerModule['openDb']>;
 
 function loadServer(): ServerModule | null {
   const tryRequire = (p: string) => {
@@ -98,6 +102,7 @@ function loadServer(): ServerModule | null {
 }
 
 // Promise-based readline prompt, with optional echo suppression for passwords.
+// Used by the non-interactive fallback only — the wizard uses clack.
 function prompt(label: string, opts: { hidden?: boolean } = {}): Promise<string> {
   return new Promise((resolve, reject) => {
     if (!process.stdin.isTTY) {
@@ -117,7 +122,6 @@ function prompt(label: string, opts: { hidden?: boolean } = {}): Promise<string>
       for (const ch of s) {
         const code = ch.charCodeAt(0);
         if (code === 0x03) {
-          // Ctrl-C
           cleanup();
           process.stdout.write('\n');
           reject(new Error('cancelled'));
@@ -130,7 +134,6 @@ function prompt(label: string, opts: { hidden?: boolean } = {}): Promise<string>
           return;
         }
         if (code === 0x7f || code === 0x08) {
-          // backspace / delete
           if (buf.length > 0) {
             buf = buf.slice(0, -1);
             if (!opts.hidden) process.stdout.write('\b \b');
@@ -154,17 +157,36 @@ function prompt(label: string, opts: { hidden?: boolean } = {}): Promise<string>
   });
 }
 
-function validateEmail(email: string): string | null {
-  if (!email || !email.includes('@') || email.length > 254) {
-    return 'enter a valid email address';
-  }
-  return null;
+function validateEmail(email: string | undefined): string | undefined {
+  const e = (email ?? '').trim();
+  if (!e || !e.includes('@') || e.length > 254) return 'enter a valid email address';
+  return undefined;
 }
 
-function validatePassword(pw: string): string | null {
-  if (pw.length < 8) return 'password must be at least 8 characters';
-  if (pw === 'changeme') return 'pick something other than the placeholder "changeme"';
-  return null;
+function validatePassword(pw: string | undefined): string | undefined {
+  const v = pw ?? '';
+  if (v.length < 8) return 'password must be at least 8 characters';
+  if (v === 'changeme') return 'pick something other than the placeholder "changeme"';
+  return undefined;
+}
+
+async function createAdmin(
+  mod: ServerModule,
+  db: Db,
+  email: string,
+  password: string,
+): Promise<void> {
+  const hash = await mod.hashPassword(password);
+  const id = randomUUID();
+  const now = Date.now();
+  db.prepare(
+    `insert into users (id, email, password_hash, display_name, is_admin, must_reset_password, metadata, created_at, last_active)
+       values (?, ?, ?, ?, 1, 0, '{}', ?, ?)`,
+  ).run(id, email, hash, email.split('@')[0], now, now);
+}
+
+function userCount(db: Db): number {
+  return (db.prepare('select count(*) as n from users').get() as { n: number } | undefined)?.n ?? 0;
 }
 
 export async function onboardCommand(args: string[]): Promise<number> {
@@ -177,25 +199,206 @@ export async function onboardCommand(args: string[]): Promise<number> {
   const dir = dataDirFromFlags(flags);
   const db = mod.openDb(dir);
 
-  const existingCount = (
-    db.prepare('select count(*) as n from users').get() as { n: number } | undefined
-  )?.n ?? 0;
+  // Interactive wizard whenever we have a TTY and weren't handed full
+  // non-interactive credentials. Otherwise fall back to the flag-driven flow.
+  const useWizard = !!process.stdin.isTTY && !(flags.email && flags.password);
+  if (useWizard) {
+    return runWizard(mod, db, dir);
+  }
+  return runNonInteractive(mod, db, dir, flags);
+}
 
-  if (existingCount > 0) {
-    info(`${existingCount} user(s) already exist in ${dir}/state.db.`);
+// ---------------------------------------------------------------------------
+// Interactive wizard (clack)
+// ---------------------------------------------------------------------------
+
+function onCancel(): never {
+  p.cancel('Setup cancelled.');
+  process.exit(130);
+}
+
+async function runWizard(mod: ServerModule, db: Db, dir: string): Promise<number> {
+  p.intro(c.cyan(c.bold(' DashTerm setup ')));
+
+  // 1. Admin account — only when the install has no users yet.
+  if (userCount(db) === 0) {
+    const emailIn = await p.text({
+      message: 'Admin email',
+      placeholder: 'admin@localhost',
+      defaultValue: 'admin@localhost',
+      validate: validateEmail,
+    });
+    if (p.isCancel(emailIn)) onCancel();
+    const email = (emailIn.trim() || 'admin@localhost').toLowerCase();
+
+    let password = '';
+    while (true) {
+      const pw1 = await p.password({ message: 'Password (min 8 chars)', validate: validatePassword });
+      if (p.isCancel(pw1)) onCancel();
+      const pw2 = await p.password({
+        message: 'Confirm password',
+        validate: (v) => (v ? undefined : 'enter the password again'),
+      });
+      if (p.isCancel(pw2)) onCancel();
+      if (pw1 !== pw2) {
+        p.log.warn("Passwords didn't match — try again.");
+        continue;
+      }
+      password = pw1;
+      break;
+    }
+
+    const sp = p.spinner();
+    sp.start('Creating admin account');
+    await createAdmin(mod, db, email, password);
+    sp.stop(`Admin account created: ${email}`);
+  } else {
+    p.log.info(`${userCount(db)} user(s) already exist — leaving accounts as-is.`);
+  }
+
+  // 2. AI coding agents — Codex / Grok Build are visibly greyed out + unselectable.
+  const claude = detectClaude();
+  const agents = await p.multiselect<string>({
+    message: 'AI coding agents  (↑/↓ move · space toggle · enter confirm)',
+    options: [
+      { value: 'claude', label: 'Claude Code', hint: summariseClaude(claude) },
+      { value: 'codex', label: 'Codex', hint: 'coming soon', disabled: true },
+      { value: 'grok', label: 'Grok Build', hint: 'coming soon', disabled: true },
+    ],
+    initialValues: ['claude'],
+    required: false,
+  });
+  if (p.isCancel(agents)) onCancel();
+  const wantClaude = agents.includes('claude');
+
+  // 3. Claude auth gate — detect + guide (we can't run Claude's OAuth login).
+  if (wantClaude) await ensureClaudeAuth(claude);
+
+  // 4. Options — the autostart daemon toggle. Pre-checked to reflect reality.
+  const daemonOn = isDaemonInstalled();
+  const options = await p.multiselect<string>({
+    message: 'Options',
+    options: [
+      {
+        value: 'autostart',
+        label: 'Start DashTerm at login',
+        hint: daemonOn ? 'currently on' : 'currently off',
+      },
+    ],
+    initialValues: ['autostart'],
+    required: false,
+  });
+  if (p.isCancel(options)) onCancel();
+  const wantAutostart = options.includes('autostart');
+
+  // 5. Apply.
+  const port = process.env.DASHTERM_PORT ?? '8765';
+  const summary: string[] = [];
+
+  if (wantAutostart) {
+    const sp = p.spinner();
+    sp.start(daemonOn ? 'Updating autostart service' : 'Installing autostart service');
+    try {
+      const unit = installDaemon({
+        port,
+        bind: process.env.DASHTERM_BIND ?? '127.0.0.1',
+        dataDir: dir,
+        agentEnabled: wantClaude,
+      });
+      sp.stop(`Autostart on → ${unit}`);
+      summary.push('Gateway is running now and relaunches on login.');
+      summary.push(c.gray(`Logs: ${gatewayLogPath()}`));
+    } catch (e) {
+      sp.error('Autostart install failed');
+      p.log.warn(e instanceof Error ? e.message : String(e));
+      summary.push('Autostart failed — start the gateway manually with `dashterm start`.');
+    }
+  } else if (daemonOn) {
+    const sp = p.spinner();
+    sp.start('Removing autostart service');
+    uninstallDaemon();
+    sp.stop('Autostart off');
+    summary.push('Start the gateway yourself with `dashterm start`.');
+  } else {
+    summary.push('Start the gateway with `dashterm start`.');
+    if (wantClaude) {
+      summary.push('To enable agentic coding on a manual start:');
+      summary.push(`  ${c.bold('DASHTERM_AGENT_ENABLED=1 dashterm start')}`);
+    }
+  }
+
+  summary.push('');
+  summary.push(`Dashboard: ${c.bold(`http://localhost:${port}`)}`);
+  p.note(summary.join('\n'), 'Done');
+  p.outro(c.green('DashTerm is ready.'));
+  return 0;
+}
+
+async function ensureClaudeAuth(initial: ClaudeStatus): Promise<void> {
+  let s = initial;
+  while (true) {
+    if (s.installed && s.credsPresent) {
+      p.log.success('Claude Code is installed and authorised.');
+      return;
+    }
+    if (!s.installed) {
+      p.note(
+        [
+          "The Claude Code CLI isn't on your PATH.",
+          '',
+          'Install it:',
+          '  npm install -g @anthropic-ai/claude-code',
+          '  (or set DASHTERM_CLAUDE_BIN to its location)',
+          '',
+          'Then sign in:  run  claude  →  /login',
+        ].join('\n'),
+        'Claude not found',
+      );
+    } else {
+      p.note(
+        [
+          'Claude Code is installed but not signed in yet.',
+          '',
+          'Sign in:  run  claude  then type  /login',
+          'and finish in your browser.',
+        ].join('\n'),
+        'Claude not authorised',
+      );
+    }
+    const choice = await p.select<string>({
+      message: 'Re-check now, or continue and sort it out later?',
+      options: [
+        { value: 'recheck', label: 'Re-check' },
+        { value: 'continue', label: 'Continue anyway' },
+      ],
+      initialValue: 'recheck',
+    });
+    if (p.isCancel(choice) || choice === 'continue') return;
+    s = detectClaude();
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Non-interactive flow (install.sh / CI)
+// ---------------------------------------------------------------------------
+
+async function runNonInteractive(
+  mod: ServerModule,
+  db: Db,
+  dir: string,
+  flags: OnboardFlags,
+): Promise<number> {
+  if (userCount(db) > 0) {
+    info(`${userCount(db)} user(s) already exist in ${dir}/state.db.`);
     info('Nothing to do. Use `dashterm add-user` to add more, `dashterm list-users` to see them.');
-    info(c.gray('Skipping onboarding; run `dashterm start` to launch the gateway.'));
+    info(c.gray('Run `dashterm start` to launch the gateway.'));
     return 0;
   }
 
   info(c.bold('DashTerm onboarding'));
   info('');
-  info('No users yet. Let\'s create the admin account.');
-  info('');
 
   let email = flags.email;
-  let password = flags.password;
-
   if (!email) {
     email = await prompt('Admin email [admin@localhost]: ');
     if (!email.trim()) email = 'admin@localhost';
@@ -207,6 +410,7 @@ export async function onboardCommand(args: string[]): Promise<number> {
     return 1;
   }
 
+  let password = flags.password;
   if (!password) {
     while (true) {
       const pw1 = await prompt('Password (min 8 chars): ', { hidden: true });
@@ -231,14 +435,7 @@ export async function onboardCommand(args: string[]): Promise<number> {
     }
   }
 
-  const hash = await mod.hashPassword(password);
-  const id = randomUUID();
-  const now = Date.now();
-  db.prepare(
-    `insert into users (id, email, password_hash, display_name, is_admin, must_reset_password, metadata, created_at, last_active)
-       values (?, ?, ?, ?, 1, 0, '{}', ?, ?)`,
-  ).run(id, email, hash, email.split('@')[0], now, now);
-
+  await createAdmin(mod, db, email, password);
   info('');
   success(`Admin account created: ${c.bold(email)}`);
 
@@ -252,10 +449,6 @@ export async function onboardCommand(args: string[]): Promise<number> {
         dataDir: dir,
       });
       success(`Daemon installed → ${unitPath}`);
-      info('');
-      info(c.bold('Done.'));
-      info('  Gateway is running now and will restart on login.');
-      info('  Open ' + c.bold('http://localhost:' + (process.env.DASHTERM_PORT ?? '8765')) + ' in a browser.');
       info(c.gray(`  Logs: ${gatewayLogPath()}`));
       info(c.gray('  Stop: `dashterm daemon uninstall`'));
     } catch (e: unknown) {
@@ -268,13 +461,7 @@ export async function onboardCommand(args: string[]): Promise<number> {
 
   info('');
   info(c.bold('Next step:'));
-  info('  Start the gateway in this terminal:');
-  info(c.gray('    $ ') + c.bold('dashterm start'));
-  info('');
-  info('  Then open the dashboard at:');
-  info(c.gray('    ') + c.bold('http://localhost:8765'));
-  info('');
-  info(c.gray('Add more users with `dashterm add-user <email>`.'));
+  info(c.gray('  $ ') + c.bold('dashterm start') + c.gray('   then open ') + c.bold('http://localhost:8765'));
   info(c.gray('Or install the autostart unit: `dashterm daemon install`.'));
   return 0;
 }

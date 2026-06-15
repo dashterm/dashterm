@@ -10,7 +10,7 @@ The CLI is what `curl install.sh | bash` symlinks onto your `PATH` as
 
 ```bash
 # fresh install via the website
-curl -fsSL https://website-mf.web.app/install.sh | bash
+curl -fsSL https://dashterm.ai/install.sh | bash
 
 # or from a clone
 git clone https://github.com/dashterm/dashterm.git
@@ -18,13 +18,23 @@ cd dashterm && npm install
 node cli/dist/index.js help
 ```
 
+Then run the interactive setup (account + AI agents + autostart):
+
+```bash
+dashterm setup
+```
+
+Requires Node 20.19+ (the wizard uses the ESM-only `@clack/prompts`).
+
 ## Command surface
 
 ### Gateway (native install — no docker)
 
 | Command | What it does |
 | --- | --- |
-| `dashterm onboard` | First-boot wizard: prompts for an admin email + password and seeds the sqlite. `--install-daemon` chains the autostart install. |
+| `dashterm setup` | Interactive wizard (clack, spacebar-toggle checkboxes): admin account → AI coding agents (**Claude Code**; **Codex** / **Grok Build** greyed-out as *coming soon*) → "start at login" autostart toggle. Detects whether the Claude Code CLI is installed and signed in, and guides you if not. Re-runnable to flip toggles later. |
+| `dashterm onboard` | Alias of `setup`. For non-interactive use (install.sh / CI), pass `--email … --password …` to seed the admin without prompts; `--install-daemon` chains the autostart install. |
+| `dashterm doctor [--deep]` | Health check: is the Claude Code CLI installed + pre-authorised (login Keychain on macOS, `~/.claude/.credentials.json` elsewhere), plus daemon status and data dir. `--deep` also reads the stored OAuth token to report its expiry. |
 | `dashterm start [--port N] [--bind ADDR]` | Boots the gateway in the foreground. Ctrl-C to stop. `--dev` runs via tsx for contributors. |
 | `dashterm add-user EMAIL [pw] [--admin] [--force-reset]` | Create an account. |
 | `dashterm list-users` | Print users in `~/.dashterm/state.db`. |

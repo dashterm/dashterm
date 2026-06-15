@@ -2,7 +2,7 @@
 # DashTerm one-liner installer (native path — no Docker required).
 #
 # Usage:
-#   curl -fsSL https://website-mf.web.app/install.sh | bash
+#   curl -fsSL https://dashterm.ai/install.sh | bash
 #
 # What it does:
 #   1. verifies macOS or Linux
@@ -60,21 +60,6 @@ trap on_error ERR
 REPO_URL="${DASHTERM_REPO_URL:-https://github.com/dashterm/dashterm.git}"
 BRANCH="${DASHTERM_BRANCH:-main}"
 INSTALL_DIR="${DASHTERM_INSTALL_DIR:-$HOME/.dashterm/src}"
-
-# Pre-launch beta: the repo may be PRIVATE. If a GitHub token is provided, use
-# it to authenticate the clone (and bake it into the remote so `dashterm update`
-# can fetch later). Public repos need no token — leave these unset. Removable at
-# go-live. The token is embedded in the remote URL (and thus .git/config), so
-# this is for trusted testers only.
-GH_TOKEN="${DASHTERM_GITHUB_TOKEN:-${GITHUB_TOKEN:-}}"
-CLONE_URL="$REPO_URL"
-if [ -n "$GH_TOKEN" ]; then
-  case "$REPO_URL" in
-    https://github.com/*)
-      CLONE_URL="https://x-access-token:${GH_TOKEN}@github.com/${REPO_URL#https://github.com/}"
-      ;;
-  esac
-fi
 
 say "${BOLD}DashTerm installer${RESET}"
 echo
@@ -139,16 +124,13 @@ fi
 
 if [ -d "$INSTALL_DIR/.git" ]; then
   say "Updating existing checkout at $INSTALL_DIR…"
-  # Refresh the remote auth in case the token changed (or the repo went private).
-  [ -n "$GH_TOKEN" ] && git -C "$INSTALL_DIR" remote set-url origin "$CLONE_URL"
   git -C "$INSTALL_DIR" fetch --tags origin
   git -C "$INSTALL_DIR" checkout "$BRANCH"
   git -C "$INSTALL_DIR" pull --ff-only
 else
-  # Print the clean URL, never CLONE_URL (which may carry the token).
   say "Cloning $REPO_URL → $INSTALL_DIR"
   mkdir -p "$(dirname "$INSTALL_DIR")"
-  git clone --branch "$BRANCH" "$CLONE_URL" "$INSTALL_DIR"
+  git clone --branch "$BRANCH" "$REPO_URL" "$INSTALL_DIR"
 fi
 ok "Repo at $INSTALL_DIR"
 
@@ -227,7 +209,8 @@ say "Data dir:  ~/.dashterm/ (sqlite + jwt-secret)"
 say "Gateway:   not yet running"
 echo
 note "Next step:"
-note "  \$ dashterm start"
+note "  \$ dashterm setup     # account + AI agents (Claude) + autostart, interactive"
+note "  \$ dashterm start     # or just run the gateway in the foreground"
 note ""
 note "Then open http://localhost:8765 in a browser and sign in."
 if [ -z "${DASHTERM_EMAIL:-}" ]; then

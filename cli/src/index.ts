@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 import { startCommand } from './commands/gateway';
 import { onboardCommand } from './commands/onboard';
+import { doctorCommand } from './commands/doctor';
 import { daemonCommand } from './commands/daemon';
 import { updateCommand } from './commands/update';
 import { providerCommand } from './commands/provider';
@@ -21,8 +22,9 @@ function help(): number {
   info(`${c.bold('Usage:')} dashterm <command> [args]`);
   info('');
   info(c.bold('Gateway (native install — no docker):'));
-  info('  onboard                        first-boot wizard: create the admin account');
-  info('  onboard --install-daemon       …and install the autostart unit');
+  info('  setup                          interactive wizard: account + AI agents + autostart');
+  info('  onboard                        alias of setup (--email/--password for non-interactive)');
+  info('  doctor [--deep]                check Claude install/auth + daemon health');
   info('  start [--port N] [--bind ADDR] run the local gateway in the foreground');
   info('  start --dev                    run via tsx (no pre-build needed)');
   info('  add-user <email> [pw]          create a user (use --admin / --force-reset)');
@@ -70,7 +72,10 @@ async function main(): Promise<number> {
     case 'start':
       return startCommand(rest);
     case 'onboard':
+    case 'setup':
       return onboardCommand(rest);
+    case 'doctor':
+      return doctorCommand(rest);
     case 'add-user':
       return addUserCommand(rest);
     case 'list-users':

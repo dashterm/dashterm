@@ -9,12 +9,12 @@ browser. There is **no hosted tier**. You run it.
 ## Install
 
 ```bash
-curl -fsSL https://website-mf.web.app/install.sh | bash
+curl -fsSL https://dashterm.ai/install.sh | bash
 ```
 
 That script:
 
-1. Checks macOS or Linux + Node 20+ (installs Node via Homebrew or
+1. Checks macOS or Linux + Node 20.19+ (installs Node via Homebrew or
    NodeSource if missing).
 2. Clones the repo to `~/.dashterm/src/`.
 3. `npm install` — postinstall builds `packages/server` + `cli/`.
@@ -22,29 +22,6 @@ That script:
    `~/.local/bin/`).
 5. Builds the web bundle (`expo export --platform web`) so the gateway
    can serve it.
-
-After that:
-
-```bash
-dashterm start          # foreground gateway
-# or:
-dashterm daemon install # autostart on every login (launchd / systemd)
-```
-
-Then open **http://localhost:8765** and sign in with the admin the gateway
-seeds on its first start — **`admin@localhost` / `changeme`** — which forces
-you to set a real password immediately. (Prefer your own admin up front? Run
-`dashterm onboard` before the first `dashterm start`.)
-
-> ⚠ Rotate the seeded password on first login, **before** exposing the
-> gateway to a network.
-
-To get the autostart + onboarding in one command:
-
-```bash
-curl -fsSL https://website-mf.web.app/install.sh \
-  | DASHTERM_INSTALL_DAEMON=1 bash
-```
 
 ### Or, from a checkout
 
@@ -57,6 +34,76 @@ dashterm start          # seeds admin@localhost / changeme on first boot
 
 A single `npm install` at the root is enough — the postinstall hook
 builds `packages/server` + the CLI automatically.
+
+## Setup
+
+After install, run the interactive setup wizard:
+
+```bash
+dashterm setup
+```
+
+It walks you through three steps, with spacebar-toggle checkboxes (↑/↓ to
+move, space to toggle, enter to confirm):
+
+1. **Admin account** — email + password. Skipped if the install already has
+   users.
+2. **AI coding agents** — pick which agents power the AgenticCoder / vibe-coded
+   apps. **Claude Code** is available today; **Codex** and **Grok Build** are
+   shown greyed-out as *coming soon*. The wizard checks whether Claude is
+   installed and signed in (see [Pre-authorising Claude](#pre-authorising-claude)
+   below) and guides you if it isn't.
+3. **Start at login** — toggles the autostart background service on or off
+   (launchd on macOS, systemd-user on Linux). Re-running `setup` reflects the
+   current state, so you can flip it back off later.
+
+Then open **http://localhost:8765** and sign in.
+
+> Prefer to skip the wizard? Just run `dashterm start`. The gateway seeds an
+> admin on its first boot — **`admin@localhost` / `changeme`** — and forces you
+> to set a real password immediately.
+>
+> ⚠ Rotate the seeded password on first login, **before** exposing the gateway
+> to a network.
+
+### Pre-authorising Claude
+
+The AgenticCoder / vibe-coding feature drives the **Claude Code CLI** on the
+host machine. DashTerm doesn't keep a separate Anthropic key for it — it reuses
+your existing Claude Code login. So before vibe-coding, make sure `claude` is
+installed and signed in:
+
+```bash
+npm install -g @anthropic-ai/claude-code   # if you don't have it yet
+claude                                      # then type /login, finish in the browser
+```
+
+`dashterm setup` detects this for you — Claude's session lives in your login
+Keychain on macOS (or `~/.claude/.credentials.json` elsewhere), and the wizard
+reads it without prompting. Check the state any time with:
+
+```bash
+dashterm doctor          # ✓ Claude installed / authorised, plus daemon health
+dashterm doctor --deep   # also verifies the stored OAuth token hasn't expired
+```
+
+> The AI **assistant** (chat) is separate from the **agent** (vibe-coding) and
+> needs no Claude login — it uses whichever provider you register with
+> `dashterm provider add` (Claude API key, GPT, Gemini, or local Ollama). See
+> [Common commands](#common-commands).
+
+### Unattended install
+
+To create the admin and install autostart in one non-interactive command (for
+CI or scripted boxes), pass credentials as environment variables:
+
+```bash
+curl -fsSL https://dashterm.ai/install.sh \
+  | DASHTERM_EMAIL=you@example.com DASHTERM_PASSWORD='…' DASHTERM_INSTALL_DAEMON=1 bash
+```
+
+Omit `DASHTERM_EMAIL`/`DASHTERM_PASSWORD` to fall back to the seeded admin, or
+omit `DASHTERM_INSTALL_DAEMON` to skip autostart.
 
 ## Who it's for
 
@@ -83,18 +130,12 @@ Not for you if:
 - `packages/web/` — React Native + Expo dashboard, served by the gateway.
 - `packages/core/` — registry, AIAssistant, plugin system, vibe-coded
   app runtime, and the storage/auth provider seam.
-- `cli/` — `dashterm start / onboard / daemon / provider / users /
-  doctor`.
+- `cli/` — `dashterm setup / start / onboard / daemon / provider /
+  users / doctor`.
 
-## The paid mobile app
+## The mobile apps
 
-The native iOS / Android shell is a separate closed-source app, sold
-to fund development. It's a thin client that points at *your* gateway
-URL — same provider seam, no telemetry, no data on a third party. The
-funding model lives there so the OSS half can stay self-host-first.
-
-The OSS web bundle works fine on a phone browser if you don't need
-push or native polish.
+Coming soon.
 
 ## Architecture in one paragraph
 
@@ -113,18 +154,22 @@ web, or `react-native-webview` on mobile.
 ## Common commands
 
 ```bash
+# setup + health
+dashterm setup                  # interactive wizard: account + AI agents + autostart
+dashterm doctor                 # check Claude install/auth + daemon status
+
 # accounts
 dashterm add-user alice@family.lan
 dashterm list-users
 dashterm set-admin alice@family.lan true
 
-# AI providers
+# AI providers (for the chat assistant — not the vibe-coding agent)
 dashterm provider add my-claude --kind anthropic --model claude-haiku-4-5 \
   --api-key sk-ant-… --default
 dashterm provider bind ai my-claude
 dashterm provider list
 
-# autostart
+# autostart (or just use `dashterm setup`)
 dashterm daemon install
 dashterm daemon status
 dashterm daemon logs -f
@@ -132,6 +177,10 @@ dashterm daemon logs -f
 
 ## License
 
-[Apache 2.0](./LICENSE). Contributions require signing the
-[CLA](./CLA.md) — one-click via the bot on your first PR. The why
-is explained in [CONTRIBUTING.md](./CONTRIBUTING.md#why-a-cla).
+[Functional Source License v1.1](./LICENSE) (`FSL-1.1-ALv2`) — source-available
+and free for any use **except** building a competing commercial product. Each
+release **automatically converts to Apache 2.0 two years** after it ships, so it
+becomes fully permissive over time.
+
+Contributions require signing the [CLA](./CLA.md) — one-click via the bot on your
+first PR. The why is explained in [CONTRIBUTING.md](./CONTRIBUTING.md#why-a-cla).

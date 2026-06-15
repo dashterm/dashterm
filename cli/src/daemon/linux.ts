@@ -35,9 +35,11 @@ export function installLinux(
   fs.mkdirSync(path.dirname(unit), { recursive: true });
   fs.mkdirSync(dashtermHome(), { recursive: true, mode: 0o700 });
 
-  const extraEnv = env.githubToken
-    ? `Environment="DASHTERM_GITHUB_TOKEN=${env.githubToken}"`
-    : '';
+  const extra: string[] = [];
+  if (env.agentEnabled) {
+    extra.push(`Environment="DASHTERM_AGENT_ENABLED=1"`);
+  }
+  const extraEnv = extra.join('\n');
   const body = renderTemplate(LINUX_SERVICE_TEMPLATE, {
     NODE_BIN: nodeBin,
     DASHTERM_BIN: dashtermBin,
@@ -49,8 +51,7 @@ export function installLinux(
     ERR_LOG_PATH: gatewayErrLogPath(),
     EXTRA_ENV: extraEnv,
   });
-  // A baked-in token is a secret — keep the unit owner-only in that case.
-  fs.writeFileSync(unit, body, { mode: env.githubToken ? 0o600 : 0o644 });
+  fs.writeFileSync(unit, body, { mode: 0o644 });
 
   for (const args of [['daemon-reload'], ['enable', '--now', LINUX_UNIT_NAME]]) {
     const res = spawnSync('systemctl', ['--user', ...args], {

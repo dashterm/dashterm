@@ -8,7 +8,8 @@ to the DashTerm project, maintained by **Beren Gamble**.
 You accept and agree to the following terms and conditions for Your present
 and future Contributions submitted to the project. In return, Beren Gamble
 will not use Your Contributions in a way that is contrary to the public
-benefit or inconsistent with the [Apache License, Version 2.0](./LICENSE).
+benefit or inconsistent with the [Functional Source License, Version 1.1
+(Apache 2.0 Future License)](./LICENSE).
 
 ## 1. Definitions
 
