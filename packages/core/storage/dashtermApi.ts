@@ -312,6 +312,15 @@ export class DashTermApiStorageProvider implements StorageProvider {
     return http<UpdateStatus>('GET', '/api/update/status');
   }
 
+  async checkUpdate(): Promise<UpdateStatus> {
+    // Forces the gateway to re-check the remote tags (the passive poll only
+    // refreshes every 6h). Push the fresh status to every subscriber so the
+    // banner in this tab reflects it immediately, same as a WS broadcast would.
+    const status = await http<UpdateStatus>('POST', '/api/update/check');
+    for (const cb of this.updateListeners) cb(status);
+    return status;
+  }
+
   async runUpdate(): Promise<void> {
     await http<{ started: boolean }>('POST', '/api/update/run');
   }

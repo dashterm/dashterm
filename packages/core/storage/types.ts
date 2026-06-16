@@ -116,6 +116,11 @@ export interface StorageProvider {
   // /api/update/run (admin-only on the gateway); subscribeUpdate yields the
   // status on mount and again on each `update:available` WS broadcast.
   getUpdateStatus(): Promise<UpdateStatus>;
+  // Force an immediate remote re-check (POST /api/update/check, admin-only on
+  // the gateway). Refreshes the gateway's cached status and dispatches the
+  // result to subscribers so a freshly cut release surfaces now, not on the
+  // next 6h poll. Returns the fresh status for the caller too.
+  checkUpdate(): Promise<UpdateStatus>;
   runUpdate(): Promise<void>;
   subscribeUpdate(cb: (status: UpdateStatus) => void): () => void;
 }

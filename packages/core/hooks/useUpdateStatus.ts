@@ -27,7 +27,9 @@ export interface UseUpdateStatus {
   status: UpdateStatus | null;
   visible: boolean;
   running: boolean;
+  checking: boolean;
   error: string | null;
+  check: () => Promise<void>;
   runUpdate: () => Promise<void>;
   dismiss: () => void;
 }
@@ -36,6 +38,7 @@ export function useUpdateStatus(): UseUpdateStatus {
   const [status, setStatus] = useState<UpdateStatus | null>(null);
   const [dismissedVersion, setDismissedVersion] = useState<string | null>(loadDismissed);
   const [running, setRunning] = useState(false);
+  const [checking, setChecking] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => storage.subscribeUpdate(setStatus), []);
@@ -61,6 +64,21 @@ export function useUpdateStatus(): UseUpdateStatus {
     setDismissedVersion(v);
   }, [status?.latestVersion]);
 
+  // Force an immediate remote re-check. storage.checkUpdate dispatches the
+  // fresh status to subscribers, so `status` updates via the effect above —
+  // we only own the transient checking/error flags here.
+  const check = useCallback(async () => {
+    setError(null);
+    setChecking(true);
+    try {
+      await storage.checkUpdate();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setChecking(false);
+    }
+  }, []);
+
   const runUpdate = useCallback(async () => {
     setError(null);
     setRunning(true);
@@ -78,5 +96,5 @@ export function useUpdateStatus(): UseUpdateStatus {
   const dismissed = !!status?.latestVersion && dismissedVersion === status.latestVersion;
   const visible = !!(status && status.supported && status.available && !dismissed);
 
-  return { status, visible, running, error, runUpdate, dismiss };
+  return { status, visible, running, checking, error, check, runUpdate, dismiss };
 }
