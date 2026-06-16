@@ -64,6 +64,16 @@ export function getUserFromRequest(
   return { row, claims };
 }
 
+// Whether the request reached us over HTTPS — directly, or via a TLS-terminating
+// proxy that set x-forwarded-proto. Drives the session cookie's Secure flag so
+// plain-http LAN access works, while a fronting HTTPS proxy still gets Secure.
+function requestIsSecure(req: FastifyRequest): boolean {
+  const xfp = req.headers['x-forwarded-proto'];
+  const proto = (Array.isArray(xfp) ? xfp[0] : xfp ?? '').split(',')[0].trim().toLowerCase();
+  if (proto) return proto === 'https';
+  return req.protocol === 'https';
+}
+
 export async function registerAuthRoutes(app: FastifyInstance, config: GatewayConfig) {
   // POST /api/auth/signin — body { email, password } → 200 + cookie
   app.post('/api/auth/signin', async (req, reply) => {
@@ -93,7 +103,7 @@ export async function registerAuthRoutes(app: FastifyInstance, config: GatewayCo
       email: row.email,
       is_admin: row.is_admin === 1,
     });
-    reply.setCookie(SESSION_COOKIE, token, sessionCookieOptions(config.bind));
+    reply.setCookie(SESSION_COOKIE, token, sessionCookieOptions(requestIsSecure(req)));
     return { user: publicUser(row) };
   });
 

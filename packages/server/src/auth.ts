@@ -8,7 +8,8 @@
  * @node-rs/argon2 picks sensible defaults; we accept them.
  *
  * Sessions: HS256 JWT signed with a secret at ~/.dashterm/jwt-secret. The
- * cookie is httpOnly + SameSite=Lax + (Secure when bound to non-localhost).
+ * cookie is httpOnly + SameSite=Lax + (Secure only when the request arrived
+ * over HTTPS — directly or via an x-forwarded-proto reverse proxy).
  * No refresh tokens for v0 — sessions last 14 days, browser refreshes on
  * password change by re-issuing.
  */
@@ -64,10 +65,12 @@ export function verifySession(secret: string, token: string): SessionClaims | nu
   }
 }
 
-export function sessionCookieOptions(bind: string) {
-  // Mark Secure only when the gateway is reachable over a network — on
-  // localhost we have no TLS, and Secure cookies aren't sent over http://.
-  const secure = bind !== '127.0.0.1' && bind !== 'localhost';
+export function sessionCookieOptions(secure: boolean) {
+  // Set Secure from the *request scheme*, not the bind address: binding to
+  // 0.0.0.0 does NOT imply TLS. A Secure cookie is silently dropped by the
+  // browser over plain http:// — it works on localhost (a secure context) but
+  // breaks on a plain-http LAN IP. Deriving it from the request also upgrades
+  // to Secure automatically behind an HTTPS reverse proxy / Tailscale serve.
   return {
     httpOnly: true,
     sameSite: 'lax' as const,
