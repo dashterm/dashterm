@@ -32,12 +32,16 @@ function resolveEnv(): DaemonInstallEnv {
   const agentEnabled = ['1', 'true', 'yes'].includes(
     (process.env.DASHTERM_AGENT_ENABLED ?? '').toLowerCase(),
   );
+  const agentAllowRoot = ['1', 'true', 'yes'].includes(
+    (process.env.DASHTERM_AGENT_ALLOW_ROOT ?? '').toLowerCase(),
+  );
   return {
     port: process.env.DASHTERM_PORT ?? '8765',
     bind: process.env.DASHTERM_BIND ?? '127.0.0.1',
     dataDir:
       process.env.DASHTERM_DATA_DIR ?? path.join(homedir(), '.dashterm'),
     ...(agentEnabled ? { agentEnabled } : {}),
+    ...(agentAllowRoot ? { agentAllowRoot } : {}),
   };
 }
 

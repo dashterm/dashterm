@@ -35,6 +35,9 @@ export interface DaemonInstallEnv {
   /** Bake DASHTERM_AGENT_ENABLED=1 so the auto-started gateway can vibe-code
    *  apps via `claude`. Off by default (the gateway's own default). */
   agentEnabled?: boolean;
+  /** Bake DASHTERM_AGENT_ALLOW_ROOT=1 so the agent may run as root (Claude
+   *  blocks bypassed-permissions as root otherwise). Opt-in; off by default. */
+  agentAllowRoot?: boolean;
 }
 
 export function installMacos(
@@ -49,6 +52,9 @@ export function installMacos(
   const extra: string[] = [];
   if (env.agentEnabled) {
     extra.push(`<key>DASHTERM_AGENT_ENABLED</key>\n      <string>1</string>`);
+  }
+  if (env.agentAllowRoot) {
+    extra.push(`<key>DASHTERM_AGENT_ALLOW_ROOT</key>\n      <string>1</string>`);
   }
   const extraEnv = extra.join('\n      ');
   const body = renderTemplate(MACOS_PLIST_TEMPLATE, {

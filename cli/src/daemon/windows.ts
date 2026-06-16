@@ -76,7 +76,12 @@ export function installWindows(
     BIND: env.bind,
     LOG_PATH: gatewayLogPath(),
     ERR_LOG_PATH: gatewayErrLogPath(),
-    EXTRA_ENV: env.agentEnabled ? 'set "DASHTERM_AGENT_ENABLED=1"' : '',
+    EXTRA_ENV: [
+      env.agentEnabled ? 'set "DASHTERM_AGENT_ENABLED=1"' : '',
+      env.agentAllowRoot ? 'set "DASHTERM_AGENT_ALLOW_ROOT=1"' : '',
+    ]
+      .filter(Boolean)
+      .join('\n'),
   });
   const scriptPath = windowsScriptPath();
   // cmd.exe wants CRLF and no BOM (a BOM gets echoed as stray bytes).

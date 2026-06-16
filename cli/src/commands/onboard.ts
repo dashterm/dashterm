@@ -284,6 +284,28 @@ async function runWizard(mod: ServerModule, db: Db, dir: string): Promise<number
   // 3. Claude auth gate — detect + guide (we can't run Claude's OAuth login).
   if (wantClaude) await ensureClaudeAuth(claude);
 
+  // 3b. Root + agent: Claude Code refuses bypassed-permissions as root, and
+  // overriding it lets the agent run any command as root — so make it an
+  // explicit opt-in with a clear warning.
+  let agentAllowRoot = false;
+  const runningAsRoot = typeof process.getuid === 'function' && process.getuid() === 0;
+  if (wantClaude && runningAsRoot) {
+    p.log.warn(
+      'DashTerm is running as root. Claude Code refuses to run agent sessions ' +
+        'with bypassed permissions as root, and overriding it lets the agent run ' +
+        'ANY command as root. Running DashTerm as a non-root user is strongly recommended.',
+    );
+    const allow = await p.confirm({
+      message: 'Allow the agent to run as root anyway? (only on a disposable/sandboxed host)',
+      initialValue: false,
+    });
+    if (p.isCancel(allow)) onCancel();
+    agentAllowRoot = allow === true;
+    if (!agentAllowRoot) {
+      p.log.info('Agent sessions stay blocked while running as root — re-run DashTerm as a non-root user.');
+    }
+  }
+
   // 4. Options — the autostart daemon toggle. Pre-checked to reflect reality.
   const daemonOn = isDaemonInstalled();
   const options = await p.multiselect<string>({
@@ -335,7 +357,8 @@ async function runWizard(mod: ServerModule, db: Db, dir: string): Promise<number
   // reads them from the environment — so surface them in the manual command.
   const startEnv =
     (bind !== '127.0.0.1' ? `DASHTERM_BIND=${bind} ` : '') +
-    (wantClaude ? 'DASHTERM_AGENT_ENABLED=1 ' : '');
+    (wantClaude ? 'DASHTERM_AGENT_ENABLED=1 ' : '') +
+    (agentAllowRoot ? 'DASHTERM_AGENT_ALLOW_ROOT=1 ' : '');
   const manualStart = `${startEnv}dashterm start`;
 
   if (wantAutostart) {
@@ -347,6 +370,7 @@ async function runWizard(mod: ServerModule, db: Db, dir: string): Promise<number
         bind,
         dataDir: dir,
         agentEnabled: wantClaude,
+        agentAllowRoot,
       });
       sp.stop(`Autostart on → ${unit}`);
       summary.push('Gateway is running now and relaunches on login.');

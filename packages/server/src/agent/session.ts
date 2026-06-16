@@ -338,9 +338,26 @@ export class AgentSession {
     if (resumeId) args.push('--resume', resumeId);
     else if (assignId) args.push('--session-id', assignId);
 
-    const env = sshBin
-      ? { ...process.env, PATH: `${sshBin}:${process.env.PATH ?? ''}` }
-      : process.env;
+    const env: NodeJS.ProcessEnv = { ...process.env };
+    if (sshBin) env.PATH = `${sshBin}:${process.env.PATH ?? ''}`;
+    // Claude Code refuses --permission-mode bypassPermissions as root unless
+    // IS_SANDBOX is set. Running the agent as root is full RCE as root, so it's
+    // opt-in: without DASHTERM_AGENT_ALLOW_ROOT we refuse with a clear message;
+    // with it we set the sandbox flag so Claude will run. Non-root installs
+    // never hit the guard.
+    const isRoot = typeof process.getuid === 'function' && process.getuid() === 0;
+    if (isRoot && !this.config.agentAllowRoot) {
+      this.send({
+        type: 'error',
+        error:
+          'The DashTerm gateway is running as root, and Claude Code refuses to ' +
+          'run agent sessions with bypassed permissions as root. Re-run DashTerm ' +
+          'as a non-root user (recommended), or set DASHTERM_AGENT_ALLOW_ROOT=1 ' +
+          'to override on a disposable/sandboxed host.',
+      });
+      return null;
+    }
+    if (isRoot) env.IS_SANDBOX = '1';
 
     let child: ChildProcessWithoutNullStreams;
     try {

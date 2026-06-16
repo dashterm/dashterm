@@ -39,6 +39,9 @@ export function installLinux(
   if (env.agentEnabled) {
     extra.push(`Environment="DASHTERM_AGENT_ENABLED=1"`);
   }
+  if (env.agentAllowRoot) {
+    extra.push(`Environment="DASHTERM_AGENT_ALLOW_ROOT=1"`);
+  }
   const extraEnv = extra.join('\n');
   const body = renderTemplate(LINUX_SERVICE_TEMPLATE, {
     NODE_BIN: nodeBin,

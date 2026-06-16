@@ -29,6 +29,10 @@ export interface GatewayConfig {
   // user. OFF by default; `npm run dev` turns it on for localhost. Don't
   // enable on a 0.0.0.0-bound gateway without rotating the default admin.
   agentEnabled: boolean;
+  // Opt-in (DASHTERM_AGENT_ALLOW_ROOT): allow agent sessions when the gateway
+  // runs as root. Claude Code blocks bypassed-permissions as root, so without
+  // this the agent refuses; with it we set IS_SANDBOX so Claude will run.
+  agentAllowRoot: boolean;
   claudeBin: string;                   // `claude` binary to spawn
   claudeModel: string | null;          // --model override; null = CLI default
   agentPermissionMode: string;         // --permission-mode value
@@ -70,6 +74,10 @@ export function loadConfig(overrides: Partial<GatewayConfig> = {}): GatewayConfi
     overrides.agentEnabled ??
     ['1', 'true', 'yes'].includes((process.env.DASHTERM_AGENT_ENABLED ?? '').toLowerCase());
 
+  const agentAllowRoot =
+    overrides.agentAllowRoot ??
+    ['1', 'true', 'yes'].includes((process.env.DASHTERM_AGENT_ALLOW_ROOT ?? '').toLowerCase());
+
   return {
     port: overrides.port ?? parseInt(process.env.DASHTERM_PORT ?? '8765', 10),
     bind: overrides.bind ?? process.env.DASHTERM_BIND ?? '127.0.0.1',
@@ -81,6 +89,7 @@ export function loadConfig(overrides: Partial<GatewayConfig> = {}): GatewayConfi
       process.env.DASHTERM_DEV_CORS_ORIGIN ??
       null,
     agentEnabled,
+    agentAllowRoot,
     claudeBin: overrides.claudeBin ?? process.env.DASHTERM_CLAUDE_BIN ?? 'claude',
     claudeModel: overrides.claudeModel ?? process.env.DASHTERM_CLAUDE_MODEL ?? null,
     agentPermissionMode:
