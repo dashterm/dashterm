@@ -16,7 +16,7 @@
  */
 
 import { randomUUID } from 'node:crypto';
-import { homedir } from 'node:os';
+import { homedir, networkInterfaces } from 'node:os';
 import path from 'node:path';
 import * as p from '@clack/prompts';
 import { installDaemon, isDaemonInstalled, uninstallDaemon } from '../daemon';
@@ -217,6 +217,16 @@ function onCancel(): never {
   process.exit(130);
 }
 
+// First non-internal IPv4 address, for the "reachable on your LAN" hint.
+function firstLanIPv4(): string | null {
+  for (const addrs of Object.values(networkInterfaces())) {
+    for (const ni of addrs ?? []) {
+      if (ni.family === 'IPv4' && !ni.internal) return ni.address;
+    }
+  }
+  return null;
+}
+
 async function runWizard(mod: ServerModule, db: Db, dir: string): Promise<number> {
   p.intro(c.cyan(c.bold(' DashTerm setup ')));
 
@@ -291,9 +301,42 @@ async function runWizard(mod: ServerModule, db: Db, dir: string): Promise<number
   if (p.isCancel(options)) onCancel();
   const wantAutostart = options.includes('autostart');
 
-  // 5. Apply.
+  // 4b. Network access — which address the gateway binds to.
   const port = process.env.DASHTERM_PORT ?? '8765';
+  const bindChoice = await p.select<string>({
+    message: 'Network access',
+    options: [
+      {
+        value: '127.0.0.1',
+        label: 'This machine only (127.0.0.1)',
+        hint: 'most secure · reach it remotely via an SSH tunnel',
+      },
+      {
+        value: '0.0.0.0',
+        label: 'Anyone on this network (0.0.0.0)',
+        hint: `reachable at http://<this-host>:${port}`,
+      },
+    ],
+    initialValue: process.env.DASHTERM_BIND === '0.0.0.0' ? '0.0.0.0' : '127.0.0.1',
+  });
+  if (p.isCancel(bindChoice)) onCancel();
+  const bind = bindChoice;
+  if (bind === '0.0.0.0') {
+    p.log.warn(
+      'Anyone on your network will be able to reach DashTerm — keep the admin password strong' +
+        (wantClaude ? ', and note the coding agent can run commands on this host.' : '.'),
+    );
+  }
+
+  // 5. Apply.
   const summary: string[] = [];
+
+  // The daemon bakes these into its unit, but a foreground `dashterm start`
+  // reads them from the environment — so surface them in the manual command.
+  const startEnv =
+    (bind !== '127.0.0.1' ? `DASHTERM_BIND=${bind} ` : '') +
+    (wantClaude ? 'DASHTERM_AGENT_ENABLED=1 ' : '');
+  const manualStart = `${startEnv}dashterm start`;
 
   if (wantAutostart) {
     const sp = p.spinner();
@@ -301,7 +344,7 @@ async function runWizard(mod: ServerModule, db: Db, dir: string): Promise<number
     try {
       const unit = installDaemon({
         port,
-        bind: process.env.DASHTERM_BIND ?? '127.0.0.1',
+        bind,
         dataDir: dir,
         agentEnabled: wantClaude,
       });
@@ -311,24 +354,24 @@ async function runWizard(mod: ServerModule, db: Db, dir: string): Promise<number
     } catch (e) {
       sp.error('Autostart install failed');
       p.log.warn(e instanceof Error ? e.message : String(e));
-      summary.push('Autostart failed — start the gateway manually with `dashterm start`.');
+      summary.push(`Autostart failed — start it manually:  ${c.bold(manualStart)}`);
     }
   } else if (daemonOn) {
     const sp = p.spinner();
     sp.start('Removing autostart service');
     uninstallDaemon();
     sp.stop('Autostart off');
-    summary.push('Start the gateway yourself with `dashterm start`.');
+    summary.push(`Start the gateway yourself:  ${c.bold(manualStart)}`);
   } else {
-    summary.push('Start the gateway with `dashterm start`.');
-    if (wantClaude) {
-      summary.push('To enable agentic coding on a manual start:');
-      summary.push(`  ${c.bold('DASHTERM_AGENT_ENABLED=1 dashterm start')}`);
-    }
+    summary.push(`Start the gateway:  ${c.bold(manualStart)}`);
   }
 
   summary.push('');
   summary.push(`Dashboard: ${c.bold(`http://localhost:${port}`)}`);
+  if (bind === '0.0.0.0') {
+    const ip = firstLanIPv4();
+    summary.push(c.gray(`On your network: http://${ip ?? '<this-host-ip>'}:${port}`));
+  }
   p.note(summary.join('\n'), 'Done');
   p.outro(c.green('DashTerm is ready.'));
   return 0;
