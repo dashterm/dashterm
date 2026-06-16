@@ -95,10 +95,6 @@ jobs:
 
           $COMMITS
 
-          ## Build Status
-
-          This release triggers automatic builds via EAS.
-
           ---
           *Version $NEW | Auto-generated release*
           NOTES_EOF
@@ -140,44 +136,3 @@ jobs:
 
     outputs:
       new_version: ${{ steps.version.outputs.new_version }}
-
-  build:
-    name: Build Release
-    needs: create-release
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          ref: ${{ needs.create-release.outputs.new_version }}
-
-      - uses: actions/setup-node@v4
-        with:
-          cache: npm
-
-      - name: Setup Expo and EAS
-        uses: expo/expo-github-action@v8
-        with:
-          eas-version: latest
-          token: ${{ secrets.EXPO_TOKEN }}
-
-      - name: Install dependencies
-        run: npm ci
-
-      - name: Update version in app.config.ts
-        run: |
-          VERSION="${{ needs.create-release.outputs.new_version }}"
-          sed -i "s/version: process.env.APP_VERSION || '[^']*'/version: '$VERSION'/" app.config.ts
-          echo "Updated app.config.ts:"
-          grep "version:" app.config.ts
-
-      - name: Build on EAS
-        run: eas build --platform all --non-interactive --no-wait --profile production --auto-submit
-
-      - name: Build Summary
-        run: |
-          echo "## EAS Build Started" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "**Version:** ${{ needs.create-release.outputs.new_version }}" >> $GITHUB_STEP_SUMMARY
-          echo "**Platforms:** iOS & Android" >> $GITHUB_STEP_SUMMARY
-          echo "**Profile:** production" >> $GITHUB_STEP_SUMMARY
-          echo "**Auto-submit:** enabled" >> $GITHUB_STEP_SUMMARY
