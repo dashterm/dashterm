@@ -1670,8 +1670,9 @@ const styles = StyleSheet.create({
     fontFamily: 'Courier New',
     color: '#00ff00',
     fontSize: 12,
-    minHeight: 24,
-    maxHeight: 100,
+    lineHeight: 18,
+    minHeight: 72,
+    maxHeight: 240,
     padding: 0,
   },
   sendButton: {
