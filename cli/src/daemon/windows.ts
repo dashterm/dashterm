@@ -101,7 +101,10 @@ export function installWindows(
           `  schtasks /Create /F /TN "${WINDOWS_TASK_NAME}" /XML "${xmlPath}"`,
       );
     }
-    // Start it now so "installed" == "running", matching launchd/systemd --now.
+    // Stop any already-running instance first, then start fresh — otherwise a
+    // reinstall/update leaves the old process (stale code) running. Mirrors
+    // launchd bootout+bootstrap / systemd restart.
+    schtasks(['/End', '/TN', WINDOWS_TASK_NAME]); // best-effort; no-op if not running
     schtasks(['/Run', '/TN', WINDOWS_TASK_NAME]);
   } finally {
     try {

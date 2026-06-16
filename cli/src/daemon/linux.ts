@@ -53,7 +53,15 @@ export function installLinux(
   });
   fs.writeFileSync(unit, body, { mode: 0o644 });
 
-  for (const args of [['daemon-reload'], ['enable', '--now', LINUX_UNIT_NAME]]) {
+  // daemon-reload picks up the (re)written unit; `enable` sets boot-start;
+  // `restart` starts it now AND restarts an already-running unit — so a
+  // reinstall/update actually loads the new build instead of leaving the stale
+  // process running (`enable --now` no-ops on an already-active unit).
+  for (const args of [
+    ['daemon-reload'],
+    ['enable', LINUX_UNIT_NAME],
+    ['restart', LINUX_UNIT_NAME],
+  ]) {
     const res = spawnSync('systemctl', ['--user', ...args], {
       stdio: ['ignore', 'pipe', 'pipe'],
     });
