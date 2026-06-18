@@ -1,10 +1,12 @@
 /**
- * One AgentSession per /api/agent/ws connection. Owns a single `claude`
- * child process for the active workspace, bridges the WebSocket protocol the
- * AgenticCoder client speaks to the CLI's stream-json stdio, and pushes
- * generated apps after each turn.
+ * One AgentSession per /api/agent/ws connection. Owns a single coding-agent
+ * child process (Claude Code or Roo Code — the user picks per workspace) for the
+ * active workspace, bridges the WebSocket protocol the AgenticCoder client
+ * speaks to the CLI's stream-json stdio, and pushes generated apps after each
+ * turn. Agent-specific argv/stdin/event details live in ./agents (AgentProfile);
+ * this class stays agent-agnostic.
  *
- * claude is run with --permission-mode bypassPermissions (gated by
+ * The agent runs with bypassed permissions / auto-approval (gated by
  * config.agentEnabled), so it can Write files and run Bash with no prompts.
  * cwd is the per-user workspace dir; that is NOT a hard sandbox.
  */
@@ -13,13 +15,21 @@ import { randomUUID } from 'crypto';
 import type { GatewayConfig } from '../config';
 import { pushChangedApps } from './pushApps';
 import {
+  type AgentId,
+  type AgentProfile,
+  availableAgents,
+  getProfile,
+  isAgentEnabled,
+} from './agents';
+import {
   DEFAULT_WORKSPACE,
   ensureWorkspace,
   isValidWorkspaceName,
   listWorkspaces,
   deleteWorkspace,
+  getAgentResumeId,
   readSession,
-  writeSession,
+  setAgentSession,
 } from './workspace';
 import {
   addHost,
@@ -111,6 +121,16 @@ export class AgentSession {
   private everSpawned = false;
   private resumeMode = true;
   private disposed = false;
+  private agentId: AgentId = 'claude';
+  private profile: AgentProfile = getProfile('claude');
+  // Whether the current child has been handed its opening turn. Roo's protocol
+  // opens a task with `start` then sends follow-ups as `message`; reset whenever
+  // a new child spawns so a respawn re-opens (and resumes) the task.
+  private sentStart = false;
+  // Whether the current child was spawned to resume an existing session.
+  private spawnedAsResume = false;
+  // Authoring contract for the active spawn; some agents deliver it in-band.
+  private systemPrompt = '';
 
   constructor(
     private readonly socket: SocketLike,
@@ -137,7 +157,7 @@ export class AgentSession {
     }
     switch (msg?.type) {
       case 'auth':
-        this.handleAuth(msg.workspace, msg.resume);
+        this.handleAuth(msg.workspace, msg.resume, msg.agent);
         break;
       case 'user':
         this.handleUser(msg);
@@ -149,7 +169,12 @@ export class AgentSession {
         this.stop();
         break;
       case 'switch_workspace':
-        this.handleAuth(msg.workspace, msg.resume);
+        this.handleAuth(msg.workspace, msg.resume, msg.agent);
+        break;
+      case 'switch_agent':
+        // Same workspace, different agent: tear down + re-auth so the new
+        // agent's resumable session is picked up.
+        this.handleAuth(this.workspace, msg.resume, msg.agent);
         break;
       case 'list_workspaces':
         this.send({ type: 'workspaces', items: listWorkspaces(this.config, this.uid) });
@@ -177,24 +202,32 @@ export class AgentSession {
     }
   }
 
-  private handleAuth(workspace: unknown, resume: unknown): void {
+  private handleAuth(workspace: unknown, resume: unknown, agent: unknown): void {
     const ws = typeof workspace === 'string' && workspace.trim() ? workspace.trim() : DEFAULT_WORKSPACE;
     if (!isValidWorkspaceName(ws)) {
       this.send({ type: 'error', error: `invalid workspace name: ${ws}` });
       return;
     }
-    // Switching workspaces means a different claude session — tear down first.
+    // Resolve the requested agent, falling back to Claude when it's unknown or
+    // not enabled by the operator.
+    const requested = typeof agent === 'string' ? agent : 'claude';
+    this.agentId = isAgentEnabled(this.config, requested) ? (requested as AgentId) : 'claude';
+    this.profile = getProfile(this.agentId);
+    // Switching workspace or agent means a different session — tear down first.
     this.killChild();
     this.everSpawned = false;
     this.currentSessionId = null;
+    this.sentStart = false;
     this.resumeMode = resume !== false;
     this.workspace = ws;
     this.dir = ensureWorkspace(this.config, this.uid, ws);
     const session = readSession(this.dir);
-    const resumeSessionId = this.resumeMode ? session.lastSessionId ?? undefined : undefined;
+    const resumeSessionId = this.resumeMode ? getAgentResumeId(session, this.agentId) : undefined;
     this.send({
       type: 'ready',
       workspace: ws,
+      agent: this.agentId,
+      agents: availableAgents(this.config),
       resume: !!resumeSessionId,
       resumeSessionId,
     });
@@ -268,47 +301,54 @@ export class AgentSession {
       this.send({ type: 'error', error: 'not authenticated to a workspace' });
       return;
     }
+
+    const text = (msg.text ?? '').trim();
+    const images = (msg.images ?? []).filter((img) => img?.data);
+    if (!text && images.length === 0) return;
+
     const child = this.ensureChild();
     if (!child) return;
 
-    const content: any[] = [];
-    const text = (msg.text ?? '').trim();
-    if (text) content.push({ type: 'text', text });
-    for (const img of msg.images ?? []) {
-      if (!img?.data) continue;
-      content.push({
-        type: 'image',
-        source: { type: 'base64', media_type: img.mediaType || 'image/png', data: img.data },
-      });
-    }
-    if (content.length === 0) return;
+    const requestId = randomUUID();
+    const lines = this.profile.buildTurn({
+      text,
+      images,
+      requestId,
+      isFirstTurn: !this.sentStart,
+      isResume: this.spawnedAsResume,
+      sessionId: this.currentSessionId,
+      systemPrompt: this.systemPrompt,
+    });
+    if (lines.length === 0) return;
 
     this.turnStartedAt = Date.now();
     this.turnActive = true;
-    const line = JSON.stringify({ type: 'user', message: { role: 'user', content } });
     try {
-      child.stdin.write(line + '\n');
+      for (const line of lines) child.stdin.write(line + '\n');
+      this.sentStart = true;
     } catch (err) {
       this.turnActive = false;
-      this.send({ type: 'error', error: `failed to send to claude: ${(err as Error).message}` });
+      this.send({ type: 'error', error: `failed to send to ${this.profile.label}: ${(err as Error).message}` });
     }
   }
 
-  /** Spawn (or reuse) the claude child for the active workspace. */
+  /** Spawn (or reuse) the agent child for the active workspace. */
   private ensureChild(): ChildProcessWithoutNullStreams | null {
     if (this.child) return this.child;
 
     const session = readSession(this.dir);
     // Continue the live session on respawn; honour an explicit resume request;
-    // otherwise start fresh with an id we assign up front.
+    // otherwise start fresh with an id we assign up front. The resume id is
+    // per-agent (a Claude session can't be resumed by Roo and vice-versa).
     let resumeId: string | null = null;
     let assignId: string | null = null;
     if (this.everSpawned && this.currentSessionId) resumeId = this.currentSessionId;
-    else if (this.resumeMode && session.lastSessionId) resumeId = session.lastSessionId;
-    else assignId = randomUUID();
+    else if (this.resumeMode) resumeId = getAgentResumeId(session, this.agentId) ?? null;
+    if (!resumeId) assignId = randomUUID();
     this.currentSessionId = resumeId ?? assignId;
+    this.spawnedAsResume = !!resumeId;
 
-    // Set up per-user SSH so claude's Bash can `ssh <alias> '...'`. The wrapper
+    // Set up per-user SSH so the agent's Bash can `ssh <alias> '...'`. The wrapper
     // dir goes first on PATH so `ssh`/`scp` resolve to the managed config.
     let sshBin: string | null = null;
     let hostAliases: string[] = [];
@@ -320,60 +360,59 @@ export class AgentSession {
       sshBin = null;
     }
 
-    const args = [
-      '-p',
-      '--input-format',
-      'stream-json',
-      '--output-format',
-      'stream-json',
-      '--verbose',
-      // Emit partial-message deltas so the client can show text as it streams.
-      '--include-partial-messages',
-      '--permission-mode',
-      this.config.agentPermissionMode,
-      '--append-system-prompt',
-      buildSystemPrompt(hostAliases),
-    ];
-    if (this.config.claudeModel) args.push('--model', this.config.claudeModel);
-    if (resumeId) args.push('--resume', resumeId);
-    else if (assignId) args.push('--session-id', assignId);
+    this.systemPrompt = buildSystemPrompt(hostAliases);
+    try {
+      this.profile.prepareWorkspace?.(this.dir, this.systemPrompt);
+    } catch {
+      /* best-effort */
+    }
+
+    const args = this.profile.buildArgs({
+      resumeId,
+      assignId,
+      systemPrompt: this.systemPrompt,
+      permissionMode: this.config.agentPermissionMode,
+      model: this.config.claudeModel,
+      workspaceDir: this.dir,
+    });
 
     const env: NodeJS.ProcessEnv = { ...process.env };
     if (sshBin) env.PATH = `${sshBin}:${process.env.PATH ?? ''}`;
-    // Claude Code refuses --permission-mode bypassPermissions as root unless
-    // IS_SANDBOX is set. Running the agent as root is full RCE as root, so it's
-    // opt-in: without DASHTERM_AGENT_ALLOW_ROOT we refuse with a clear message;
-    // with it we set the sandbox flag so Claude will run. Non-root installs
-    // never hit the guard.
+    // Running the agent with bypassed permissions / auto-approval as root is full
+    // RCE as root, so it's opt-in: without DASHTERM_AGENT_ALLOW_ROOT we refuse.
+    // Claude additionally refuses unless IS_SANDBOX is set; other agents don't,
+    // but the same gate applies because the risk is identical.
     const isRoot = typeof process.getuid === 'function' && process.getuid() === 0;
     if (isRoot && !this.config.agentAllowRoot) {
       this.send({
         type: 'error',
         error:
-          'The DashTerm gateway is running as root, and Claude Code refuses to ' +
-          'run agent sessions with bypassed permissions as root. Re-run DashTerm ' +
-          'as a non-root user (recommended), or set DASHTERM_AGENT_ALLOW_ROOT=1 ' +
+          `The DashTerm gateway is running as root, which would let ${this.profile.label} ` +
+          'run agent sessions with bypassed permissions as root (full RCE). Re-run ' +
+          'DashTerm as a non-root user (recommended), or set DASHTERM_AGENT_ALLOW_ROOT=1 ' +
           'to override on a disposable/sandboxed host.',
       });
       return null;
     }
-    if (isRoot) env.IS_SANDBOX = '1';
+    if (isRoot && this.profile.needsRootSandbox) env.IS_SANDBOX = '1';
 
     let child: ChildProcessWithoutNullStreams;
     try {
-      child = spawn(this.config.claudeBin, args, {
+      child = spawn(this.profile.bin(this.config), args, {
         cwd: this.dir,
         env,
         stdio: ['pipe', 'pipe', 'pipe'],
       });
     } catch (err) {
-      this.send({ type: 'error', error: `failed to spawn claude: ${(err as Error).message}` });
+      this.send({ type: 'error', error: `failed to spawn ${this.profile.label}: ${(err as Error).message}` });
       return null;
     }
 
     this.child = child;
     this.everSpawned = true;
     this.stdoutBuf = '';
+    // A new child must be (re)opened: Roo sends `start` on the first turn.
+    this.sentStart = false;
 
     child.stdout.setEncoding('utf8');
     child.stdout.on('data', (chunk: string) => this.onStdout(chunk));
@@ -383,7 +422,7 @@ export class AgentSession {
       if (text) this.send({ type: 'claude_log', stream: 'stderr', text });
     });
     child.on('error', (err) => {
-      this.send({ type: 'error', error: `claude process error: ${err.message}` });
+      this.send({ type: 'error', error: `${this.profile.label} process error: ${err.message}` });
     });
     child.on('close', (code) => {
       if (this.child === child) this.child = null;
@@ -408,31 +447,41 @@ export class AgentSession {
       } catch {
         continue;
       }
-      this.handleClaudeEvent(event);
+      this.handleAgentEvent(event);
     }
   }
 
-  private handleClaudeEvent(event: any): void {
-    if (event?.type === 'result') {
-      // Ignore a result for a turn that already ended — e.g. the dying process
-      // after a user stop — so we don't forward a spurious error line or emit a
-      // second session_end. Flip turnActive synchronously to make this idempotent.
-      if (!this.turnActive) return;
-      this.turnActive = false;
-      this.send({ type: 'claude_event', event });
-      void this.finishTurn(event);
-      return;
-    }
-    // Forward everything else verbatim — the client's renderClaudeEvent
-    // understands the shapes.
-    this.send({ type: 'claude_event', event });
-    if (event?.type === 'system' && event?.subtype === 'init' && event?.session_id) {
-      this.currentSessionId = event.session_id;
-      writeSession(this.dir, { lastSessionId: event.session_id, lastActivityAt: Date.now() });
+  // Translate one native stdout event into normalised signals and act on them.
+  // The client only ever sees Claude-shaped `claude_event`s (the profile maps
+  // each agent's dialect into that vocabulary), so renderClaudeEvent stays the
+  // single client-side renderer.
+  private handleAgentEvent(event: any): void {
+    for (const sig of this.profile.normalizeEvent(event, { knownSessionId: this.currentSessionId })) {
+      switch (sig.kind) {
+        case 'event':
+          this.send({ type: 'claude_event', event: sig.event });
+          break;
+        case 'session':
+          this.currentSessionId = sig.sessionId;
+          setAgentSession(this.dir, this.agentId, sig.sessionId);
+          break;
+        case 'error':
+          this.send({ type: 'error', error: sig.error });
+          break;
+        case 'turn_end':
+          // Ignore a completion for a turn that already ended — e.g. the dying
+          // process after a user stop, or a redundant result+control:done pair —
+          // so we don't forward a spurious line or emit a second session_end.
+          if (!this.turnActive) break;
+          this.turnActive = false;
+          if (sig.event !== undefined) this.send({ type: 'claude_event', event: sig.event });
+          void this.finishTurn(sig.isError);
+          break;
+      }
     }
   }
 
-  private async finishTurn(event: any): Promise<void> {
+  private async finishTurn(isError: boolean): Promise<void> {
     const since = this.turnStartedAt;
     try {
       const { pushed, errors } = await pushChangedApps({
@@ -451,11 +500,10 @@ export class AgentSession {
       this.send({ type: 'app_error', file: 'apps/*', error: (err as Error).message });
     }
     if (this.currentSessionId) {
-      writeSession(this.dir, { lastSessionId: this.currentSessionId, lastActivityAt: Date.now() });
+      setAgentSession(this.dir, this.agentId, this.currentSessionId);
     }
     this.turnActive = false;
-    const code = event?.is_error || event?.subtype === 'error' ? 1 : 0;
-    this.send({ type: 'session_end', code });
+    this.send({ type: 'session_end', code: isError ? 1 : 0 });
   }
 
   private killChild(): void {

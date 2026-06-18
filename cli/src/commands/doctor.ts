@@ -11,6 +11,7 @@ import { homedir } from 'node:os';
 import path from 'node:path';
 import { daemonStatus } from '../daemon';
 import { detectClaude, readClaudeExpiry } from '../lib/claude-auth';
+import { detectRoo, summariseRoo } from '../lib/roo-auth';
 import { c, info, success, warn } from '../lib/log';
 
 function line(label: string, value: string): void {
@@ -60,6 +61,22 @@ export async function doctorCommand(args: string[]): Promise<number> {
   }
   // (not-installed already reported above)
   if (!deep) info(c.gray('  (run `dashterm doctor --deep` to verify token expiry)'));
+  info('');
+
+  // --- Roo Code ---
+  info(c.bold('Roo Code (agentic coder)'));
+  const roo = detectRoo();
+  if (roo.installed) {
+    success(`  installed  ${roo.binPath}`);
+  } else {
+    warn('  not installed — `curl -fsSL https://raw.githubusercontent.com/RooCodeInc/Roo-Code/main/apps/cli/install.sh | sh` (or set DASHTERM_ROO_BIN)');
+  }
+  if (roo.credsPresent) {
+    success(`  configured (${summariseRoo(roo)})`);
+  } else if (roo.installed) {
+    warn('  no provider key — set one in ~/.config/roo/settings.json or e.g. OPENROUTER_API_KEY');
+  }
+  info(c.gray('  (Roo enabled by DASHTERM_ROO_ENABLED=1; `dashterm setup` sets it)'));
   info('');
 
   // --- Daemon ---

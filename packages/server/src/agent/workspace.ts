@@ -17,7 +17,13 @@ import type { GatewayConfig } from '../config';
 export const DEFAULT_WORKSPACE = 'default';
 
 export interface SessionMeta {
+  // Legacy single-session id, written before multi-agent support. Treated as
+  // Claude's resumable session for back-compat.
   lastSessionId?: string;
+  // Resumable session/task id per agent (e.g. { claude: {...}, roo: {...} }).
+  // Each agent maintains an independent session: a Claude session id can't be
+  // resumed by Roo and vice-versa.
+  agentSessions?: Record<string, { sessionId?: string; lastActivityAt?: number }>;
   createdAt?: number;
   lastActivityAt?: number;
 }
@@ -28,6 +34,9 @@ export interface WorkspaceSummary {
   lastActivityAt: number | null;
   hasResumableSession: boolean;
   lastSessionId: string | null;
+  // Agent ids that have a resumable session in this workspace, so the client
+  // can show "resumable" for the currently-selected agent.
+  resumableAgents: string[];
   createdAt: number | null;
 }
 
@@ -78,6 +87,26 @@ export function writeSession(dir: string, patch: Partial<SessionMeta>): void {
   writeJsonAtomic(path.join(dir, '.session.json'), { ...current, ...patch });
 }
 
+/** The resumable session/task id for an agent, falling back to the legacy field for Claude. */
+export function getAgentResumeId(meta: SessionMeta, agent: string): string | undefined {
+  const fromMap = meta.agentSessions?.[agent]?.sessionId;
+  if (fromMap) return fromMap;
+  if (agent === 'claude') return meta.lastSessionId; // pre-multi-agent installs
+  return undefined;
+}
+
+/** Record an agent's latest session/task id (and keep the legacy field in sync for Claude). */
+export function setAgentSession(dir: string, agent: string, sessionId: string): void {
+  const current = readSession(dir);
+  const now = Date.now();
+  const patch: Partial<SessionMeta> = {
+    agentSessions: { ...(current.agentSessions ?? {}), [agent]: { sessionId, lastActivityAt: now } },
+    lastActivityAt: now,
+  };
+  if (agent === 'claude') patch.lastSessionId = sessionId;
+  writeSession(dir, patch);
+}
+
 export function readPushmap(dir: string): Record<string, string> {
   return readJson<Record<string, string>>(path.join(dir, '.pushmap.json'), {});
 }
@@ -109,12 +138,18 @@ export function listWorkspaces(config: GatewayConfig, uid: string): WorkspaceSum
     .map((name) => {
       const dir = path.join(root, name);
       const session = readSession(dir);
+      const resumable = new Set<string>();
+      for (const [agent, meta] of Object.entries(session.agentSessions ?? {})) {
+        if (meta?.sessionId) resumable.add(agent);
+      }
+      if (session.lastSessionId) resumable.add('claude');
       return {
         name,
         appCount: countApps(dir),
         lastActivityAt: session.lastActivityAt ?? session.createdAt ?? null,
-        hasResumableSession: !!session.lastSessionId,
+        hasResumableSession: resumable.size > 0,
         lastSessionId: session.lastSessionId ?? null,
+        resumableAgents: [...resumable],
         createdAt: session.createdAt ?? null,
       };
     })

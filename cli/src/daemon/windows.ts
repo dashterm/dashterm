@@ -79,6 +79,7 @@ export function installWindows(
     EXTRA_ENV: [
       env.agentEnabled ? 'set "DASHTERM_AGENT_ENABLED=1"' : '',
       env.agentAllowRoot ? 'set "DASHTERM_AGENT_ALLOW_ROOT=1"' : '',
+      env.rooEnabled ? 'set "DASHTERM_ROO_ENABLED=1"' : '',
     ]
       .filter(Boolean)
       .join('\n'),

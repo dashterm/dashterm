@@ -66,13 +66,13 @@ export default function AgenticCoderSettings({ state, updateState, onClose }: Ap
 
       <Text style={[styles.label, { marginTop: 24 }]}>HOSTING OPTIONS</Text>
       <Text style={styles.help}>
-        • <Text style={styles.bold}>Use the operator's dashterm</Text> (pre-authenticated Claude
-        Code — owner pays the bill). Paste the URL they shared.{'\n\n'}
+        • <Text style={styles.bold}>Use the operator's dashterm</Text> (preconfigured coding
+        agent — owner pays the bill). Paste the URL they shared.{'\n\n'}
         • <Text style={styles.bold}>Host your own</Text>: build the relay server image,
         run `docker compose up -d dashterm`, expose port 18790 via Tailscale Serve
         for HTTPS, then paste the URL here.{'\n\n'}
         • <Text style={styles.bold}>Prefer the CLI</Text>: run `dashterm dev` locally and
-        edit files with your own Claude Code — no relay needed.
+        edit files with your own agent (Claude Code, Roo Code) — no relay needed.
       </Text>
 
       <View style={[styles.row, { marginTop: 16 }]}>

@@ -19,6 +19,7 @@ interface AgenticCoderSession {
 
 interface AgenticCoderState {
   relayUrl?: string;
+  agent?: string;
   workspace?: string;
   recentPushes?: Array<{
     shareCode: string;
@@ -42,6 +43,7 @@ interface AgenticCoderState {
 
 const defaultState: AgenticCoderState = {
   relayUrl: '',
+  agent: 'claude',
   workspace: 'default',
   recentPushes: [],
   sessionsByWorkspace: {},
@@ -52,7 +54,7 @@ export const agenticCoderPlugin: AppDefinition<AgenticCoderState> = {
   id: 'agenticcoder',
   type: 'agenticcoder',
   title: 'AGENTIC CODER',
-  description: 'Build custom apps by chatting with a pre-authenticated Claude Code instance',
+  description: 'Build custom apps by chatting with a preconfigured CLI coding agent (Claude Code, Roo Code)',
   icon: '🛠',
   component: ({ state, updateState }: AppComponentProps) =>
     React.createElement(AgenticCoder, { appState: state, onUpdate: updateState }),

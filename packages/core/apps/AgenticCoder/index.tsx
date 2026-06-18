@@ -32,6 +32,10 @@ interface Session {
 interface AgenticCoderState {
   // User-configurable so a user can point at their own self-hosted relay.
   relayUrl?: string;
+  // Which CLI coding agent this instance drives (e.g. 'claude', 'roo'). The
+  // gateway resumes a separate session per agent, so switching agents tears
+  // down + re-auths. Defaults to 'claude'.
+  agent?: string;
   // Active workspace for this AgenticCoder instance. Different instances can hold
   // different workspaces — that's how you keep two vibe-coding projects open
   // side-by-side without them stepping on each other.
@@ -64,7 +68,16 @@ interface WorkspaceSummary {
   lastActivityAt: number | null;
   hasResumableSession: boolean;
   lastSessionId: string | null;
+  // Agent ids with a resumable session here; used to show "resumable" for the
+  // currently-selected agent. Older gateways omit it (fall back to the boolean).
+  resumableAgents?: string[];
   createdAt: number | null;
+}
+
+interface AgentInfo {
+  id: string;
+  label: string;
+  enabled?: boolean;
 }
 
 interface HostSummary {
@@ -101,6 +114,9 @@ function defaultRelayUrl(): string {
 }
 const DEFAULT_RELAY_URL = defaultRelayUrl();
 const DEFAULT_WORKSPACE = 'default';
+const DEFAULT_AGENT = 'claude';
+// Fallback shown before the gateway reports the agents it has enabled.
+const FALLBACK_AGENTS: AgentInfo[] = [{ id: 'claude', label: 'Claude Code' }];
 
 type ConnState = 'idle' | 'connecting' | 'authing' | 'ready' | 'closed' | 'error';
 
@@ -159,6 +175,7 @@ export default function AgenticCoder({ appState, onUpdate, relatedWorkspaceNames
   const state: AgenticCoderState = { recentPushes: [], workspace: DEFAULT_WORKSPACE, ...(appState || {}) };
   const relayUrl = (state.relayUrl || DEFAULT_RELAY_URL || '').trim();
   const workspace = (state.workspace || DEFAULT_WORKSPACE).trim();
+  const agent = (state.agent || DEFAULT_AGENT).trim();
   // Filter applies only when the parent provided a non-empty related set —
   // otherwise there's nothing to filter against, so show everything.
   const filterAvailable = !!(relatedWorkspaceNames && relatedWorkspaceNames.length > 0);
@@ -180,6 +197,8 @@ export default function AgenticCoder({ appState, onUpdate, relatedWorkspaceNames
   const [workspaces, setWorkspaces] = useState<WorkspaceSummary[]>([]);
   const [showPicker, setShowPicker] = useState(!relayUrl);
   const [showSessionsPicker, setShowSessionsPicker] = useState(false);
+  const [showAgentPicker, setShowAgentPicker] = useState(false);
+  const [availableAgents, setAvailableAgents] = useState<AgentInfo[]>(FALLBACK_AGENTS);
   const [newWorkspaceName, setNewWorkspaceName] = useState('');
   const [relayUrlDraft, setRelayUrlDraft] = useState<string>(state.relayUrl || '');
   const [attachedImages, setAttachedImages] = useState<AttachedImage[]>([]);
@@ -197,6 +216,18 @@ export default function AgenticCoder({ appState, onUpdate, relatedWorkspaceNames
   // callbacks without making them dependencies (they capture once at connect).
   const activeWorkspaceRef = useRef<string>(workspace);
   activeWorkspaceRef.current = workspace;
+  // Same idea for the active agent — read it from inside the WS callbacks
+  // without making them re-bind when it changes.
+  const activeAgentRef = useRef<string>(agent);
+  activeAgentRef.current = agent;
+  const availableAgentsRef = useRef<AgentInfo[]>(availableAgents);
+  availableAgentsRef.current = availableAgents;
+  const agentLabel = availableAgents.find((a) => a.id === agent)?.label || agent;
+  // Ref-reading variant for the long-lived WS callbacks (always current even
+  // after an agent switch, which the captured `agentLabel` const would miss).
+  const agentLabelNow = () =>
+    availableAgentsRef.current.find((a) => a.id === activeAgentRef.current)?.label ||
+    activeAgentRef.current;
   // When the user clicks "Start new session" while offline, this flag tells the
   // *next* connect() to send `resume: false` so claude doesn't pull the old
   // session's context back in.
@@ -423,6 +454,7 @@ export default function AgenticCoder({ appState, onUpdate, relatedWorkspaceNames
         type: 'auth',
         ...(idToken ? { idToken } : {}),
         workspace: ws_name,
+        agent: activeAgentRef.current,
         resume: wantResume,
       }));
     };
@@ -460,13 +492,20 @@ export default function AgenticCoder({ appState, onUpdate, relatedWorkspaceNames
         case 'ready':
           setConn('ready');
           setResumed(!!msg.resume);
+          if (Array.isArray(msg.agents) && msg.agents.length > 0) {
+            setAvailableAgents(msg.agents);
+          }
           if (msg.workspace && msg.workspace !== activeWorkspaceRef.current) {
             // Server settled on a different workspace name (e.g. defaulted).
             onUpdate({ workspace: msg.workspace, recentPushes: [] });
           }
+          if (msg.agent && msg.agent !== activeAgentRef.current) {
+            // Server fell back to a different agent (e.g. requested one is off).
+            onUpdate({ agent: msg.agent });
+          }
           append(mkLine(
             'system',
-            `> ready  workspace=${msg.workspace}  ${msg.resume
+            `> ready  agent=${msg.agent || activeAgentRef.current}  workspace=${msg.workspace}  ${msg.resume
               ? `resuming session ${shortenSessionId(msg.resumeSessionId)}`
               : 'fresh session'}`,
           ));
@@ -500,7 +539,7 @@ export default function AgenticCoder({ appState, onUpdate, relatedWorkspaceNames
           break;
         case 'session_end':
           // Quiet system note + visual separator marking the end of the turn.
-          append(mkLine('system', `> claude finished (exit ${msg.code})`));
+          append(mkLine('system', `> ${agentLabelNow()} finished (exit ${msg.code})`));
           append(mkLine('turn_end', '─────────────────────────────────────'));
           setWaitingForReply(false);
           setStreamingText('');
@@ -549,7 +588,7 @@ export default function AgenticCoder({ appState, onUpdate, relatedWorkspaceNames
         return;
       }
       if (event.type === 'system' && event.subtype === 'init') {
-        append(mkLine('system', `> claude session ${shortenSessionId(event.session_id)}`));
+        append(mkLine('system', `> ${agentLabelNow()} session ${shortenSessionId(event.session_id)}`));
         return;
       }
       if (event.type === 'assistant' && event.message?.content) {
@@ -674,6 +713,27 @@ export default function AgenticCoder({ appState, onUpdate, relatedWorkspaceNames
       connect(name);
     }
   }, [append, connect, onUpdate, workspace]);
+
+  // Switch which CLI agent drives this workspace. The gateway resumes a separate
+  // session per agent, so this tears down the current child and re-auths with the
+  // new agent (resuming that agent's own session if one exists).
+  const switchAgent = useCallback((id: string) => {
+    setShowAgentPicker(false);
+    if (!id || id === activeAgentRef.current) return;
+    if (waitingForReply) {
+      setError('Wait for the current turn to finish before switching agents.');
+      return;
+    }
+    setError(null);
+    onUpdate({ agent: id });
+    append(mkLine('system', `> switching agent to ${id}`));
+    if (wsRef.current?.readyState === 1) {
+      setConn('authing');
+      setResumed(false);
+      wsRef.current.send(JSON.stringify({ type: 'switch_agent', agent: id, resume: true }));
+    }
+    // If offline, the next connect() reads the new agent from activeAgentRef.
+  }, [append, onUpdate, waitingForReply]);
 
   // Archive the current live log into sessions[0] (force-flushing the debounced
   // persistence), then create a fresh session and make it the new live + viewed
@@ -858,7 +918,15 @@ export default function AgenticCoder({ appState, onUpdate, relatedWorkspaceNames
           {relayUrl ? `  ${shortenUrl(relayUrl)}` : '  (no relay url)'}
         </Text>
         <Pressable
-          onPress={() => { setShowPicker((v) => !v); setShowHostsPicker(false); setShowSessionsPicker(false); }}
+          onPress={() => { setShowAgentPicker((v) => !v); setShowPicker(false); setShowHostsPicker(false); setShowSessionsPicker(false); }}
+          style={styles.agentButton}
+        >
+          <Text style={styles.agentButtonText} numberOfLines={1} ellipsizeMode="tail">
+            {`ag:${agent}${showAgentPicker ? '▴' : '▾'}`}
+          </Text>
+        </Pressable>
+        <Pressable
+          onPress={() => { setShowPicker((v) => !v); setShowHostsPicker(false); setShowSessionsPicker(false); setShowAgentPicker(false); }}
           style={styles.workspaceButton}
         >
           <Text
@@ -870,7 +938,7 @@ export default function AgenticCoder({ appState, onUpdate, relatedWorkspaceNames
           </Text>
         </Pressable>
         <Pressable
-          onPress={() => { setShowSessionsPicker((v) => !v); setShowPicker(false); setShowHostsPicker(false); }}
+          onPress={() => { setShowSessionsPicker((v) => !v); setShowPicker(false); setShowHostsPicker(false); setShowAgentPicker(false); }}
           style={styles.sessionButton}
         >
           <Text style={styles.sessionButtonText} numberOfLines={1} ellipsizeMode="tail">
@@ -878,7 +946,7 @@ export default function AgenticCoder({ appState, onUpdate, relatedWorkspaceNames
           </Text>
         </Pressable>
         <Pressable
-          onPress={() => { setShowHostsPicker((v) => !v); setShowPicker(false); setShowSessionsPicker(false); }}
+          onPress={() => { setShowHostsPicker((v) => !v); setShowPicker(false); setShowSessionsPicker(false); setShowAgentPicker(false); }}
           style={styles.workspaceButton}
         >
           <Text style={styles.workspaceButtonText} numberOfLines={1} ellipsizeMode="tail">
@@ -895,6 +963,38 @@ export default function AgenticCoder({ appState, onUpdate, relatedWorkspaceNames
           </Pressable>
         )}
       </View>
+
+      {showAgentPicker && (
+        <View style={styles.picker}>
+          <Text style={styles.label}>+-- CODING AGENT --+</Text>
+          <Text style={styles.help}>
+            {`Pick which preconfigured CLI agent builds your apps. Each agent keeps\nits own resumable session per workspace. Enable more in \`dashterm setup\`.`}
+          </Text>
+          {availableAgents.map((a) => {
+            const isActive = a.id === agent;
+            const resumableHere = (
+              workspaces.find((w) => w.name === workspace)?.resumableAgents || []
+            ).includes(a.id);
+            return (
+              <View key={a.id} style={styles.pickerRow}>
+                <Pressable onPress={() => switchAgent(a.id)} style={styles.pickerNameButton}>
+                  <Text style={[styles.pickerName, isActive && styles.pickerNameActive]}>
+                    {`${isActive ? '> ' : '  '}${a.label}`}
+                  </Text>
+                  <Text style={styles.pickerMeta}>
+                    {`${a.id}${resumableHere ? ' · resumable here' : ''}`}
+                  </Text>
+                </Pressable>
+              </View>
+            );
+          })}
+          {availableAgents.length <= 1 && (
+            <Text style={styles.hint}>
+              {`Only one agent is enabled — add another (e.g. Roo Code) with \`dashterm setup\`.`}
+            </Text>
+          )}
+        </View>
+      )}
 
       {showPicker && (
         <View style={styles.picker}>
@@ -973,7 +1073,7 @@ export default function AgenticCoder({ appState, onUpdate, relatedWorkspaceNames
                     {w.name === workspace ? '> ' : '  '}{w.name}
                   </Text>
                   <Text style={styles.pickerMeta}>
-                    {`${w.appCount} app${w.appCount === 1 ? '' : 's'} · ${formatRelative(w.lastActivityAt)}${w.hasResumableSession ? ' · resumable' : ''}`}
+                    {`${w.appCount} app${w.appCount === 1 ? '' : 's'} · ${formatRelative(w.lastActivityAt)}${(w.resumableAgents ? w.resumableAgents.includes(agent) : w.hasResumableSession) ? ' · resumable' : ''}`}
                   </Text>
                 </Pressable>
                 {w.name !== workspace && conn === 'ready' && (
@@ -1204,7 +1304,7 @@ export default function AgenticCoder({ appState, onUpdate, relatedWorkspaceNames
         )}
       </ScrollView>
 
-      {waitingForReply && <WorkingIndicator streamingText={streamingText} />}
+      {waitingForReply && <WorkingIndicator streamingText={streamingText} agentLabel={agentLabel} />}
 
       {(state.recentPushes || []).length > 0 && (
         <View style={styles.pushesPanel}>
@@ -1280,7 +1380,7 @@ export default function AgenticCoder({ appState, onUpdate, relatedWorkspaceNames
 // long tool calls (e.g. ssh) produce gaps with no output; this makes it clear
 // the session is busy, not hung. When partial-message text is streaming, shows
 // a live tail of it as a "thinking" preview. Mounts fresh each turn.
-function WorkingIndicator({ streamingText }: { streamingText: string }) {
+function WorkingIndicator({ streamingText, agentLabel }: { streamingText: string; agentLabel: string }) {
   const [tick, setTick] = useState(0);
   const startRef = useRef(Date.now());
   useEffect(() => {
@@ -1295,7 +1395,7 @@ function WorkingIndicator({ streamingText }: { streamingText: string }) {
   return (
     <View style={styles.workingBox}>
       <View style={styles.workingRow}>
-        <Text style={styles.workingText}>{`${frames[tick % frames.length]} claude is ${preview ? 'writing' : 'working'}${dots}`}</Text>
+        <Text style={styles.workingText}>{`${frames[tick % frames.length]} ${agentLabel} is ${preview ? 'writing' : 'working'}${dots}`}</Text>
         <Text style={styles.workingMeta}>{`${elapsed}s · STOP to interrupt`}</Text>
       </View>
       {preview ? (
@@ -1332,9 +1432,24 @@ function isValidWorkspaceName(name: string): boolean {
 
 function summariseToolInput(name: string, input: any): string {
   if (!input || typeof input !== 'object') return '';
+  // Claude Code tool names.
   if (name === 'Write' || name === 'Edit' || name === 'Read') return input.file_path || '';
   if (name === 'Bash') return truncate(input.command || '', 120);
   if (name === 'Grep') return `${input.pattern || ''} ${input.path ? `in ${input.path}` : ''}`.trim();
+  // Roo Code tool names.
+  if (name === 'execute_command') return truncate(input.command || '', 120);
+  if (
+    name === 'write_to_file' ||
+    name === 'read_file' ||
+    name === 'apply_diff' ||
+    name === 'insert_content' ||
+    name === 'search_and_replace' ||
+    name === 'list_files'
+  ) {
+    return input.path || input.file_path || '';
+  }
+  if (name === 'search_files') return `${input.regex || ''} ${input.path ? `in ${input.path}` : ''}`.trim();
+  if (name === 'ask_followup_question') return truncate(input.question || '', 120);
   return truncate(JSON.stringify(input), 120);
 }
 
@@ -1444,6 +1559,16 @@ const styles = StyleSheet.create({
     flexShrink: 0,
   },
   sessionButtonText: { fontFamily: 'Courier New', fontSize: 11, color: '#ffff00' },
+  agentButton: {
+    borderWidth: 1,
+    borderColor: '#00ffff',
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    marginRight: 4,
+    flexShrink: 1,
+    maxWidth: 120,
+  },
+  agentButtonText: { fontFamily: 'Courier New', fontSize: 11, color: '#00ffff' },
   archiveBanner: {
     flexDirection: 'row',
     alignItems: 'center',
