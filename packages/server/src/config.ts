@@ -41,6 +41,11 @@ export interface GatewayConfig {
   // env var) — the gateway passes none.
   rooEnabled: boolean;
   rooBin: string;                      // `roo` binary to spawn
+  // Codex (OpenAI's CLI agent). Like Roo it's only offered to clients when
+  // codexEnabled is on (DASHTERM_CODEX_ENABLED), and self-configures its own
+  // provider (ChatGPT login or API key in ~/.codex) — the gateway passes none.
+  codexEnabled: boolean;
+  codexBin: string;                    // `codex` binary to spawn
   agentPermissionMode: string;         // --permission-mode value
   agentRoot: string;                   // root dir for per-user workspaces
 }
@@ -88,6 +93,10 @@ export function loadConfig(overrides: Partial<GatewayConfig> = {}): GatewayConfi
     overrides.rooEnabled ??
     ['1', 'true', 'yes'].includes((process.env.DASHTERM_ROO_ENABLED ?? '').toLowerCase());
 
+  const codexEnabled =
+    overrides.codexEnabled ??
+    ['1', 'true', 'yes'].includes((process.env.DASHTERM_CODEX_ENABLED ?? '').toLowerCase());
+
   return {
     port: overrides.port ?? parseInt(process.env.DASHTERM_PORT ?? '8765', 10),
     bind: overrides.bind ?? process.env.DASHTERM_BIND ?? '127.0.0.1',
@@ -104,6 +113,8 @@ export function loadConfig(overrides: Partial<GatewayConfig> = {}): GatewayConfi
     claudeModel: overrides.claudeModel ?? process.env.DASHTERM_CLAUDE_MODEL ?? null,
     rooEnabled,
     rooBin: overrides.rooBin ?? process.env.DASHTERM_ROO_BIN ?? 'roo',
+    codexEnabled,
+    codexBin: overrides.codexBin ?? process.env.DASHTERM_CODEX_BIN ?? 'codex',
     agentPermissionMode:
       overrides.agentPermissionMode ??
       process.env.DASHTERM_AGENT_PERMISSION_MODE ??

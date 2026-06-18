@@ -41,6 +41,9 @@ export interface DaemonInstallEnv {
   /** Bake DASHTERM_ROO_ENABLED=1 so the Roo Code agent is offered to clients
    *  (the gateway only surfaces Roo when this is on). Off by default. */
   rooEnabled?: boolean;
+  /** Bake DASHTERM_CODEX_ENABLED=1 so the Codex agent is offered to clients.
+   *  Off by default. */
+  codexEnabled?: boolean;
 }
 
 export function installMacos(
@@ -61,6 +64,9 @@ export function installMacos(
   }
   if (env.rooEnabled) {
     extra.push(`<key>DASHTERM_ROO_ENABLED</key>\n      <string>1</string>`);
+  }
+  if (env.codexEnabled) {
+    extra.push(`<key>DASHTERM_CODEX_ENABLED</key>\n      <string>1</string>`);
   }
   const extraEnv = extra.join('\n      ');
   const body = renderTemplate(MACOS_PLIST_TEMPLATE, {

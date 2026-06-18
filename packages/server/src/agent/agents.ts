@@ -24,7 +24,7 @@ import fs from 'fs';
 import path from 'path';
 import type { GatewayConfig } from '../config';
 
-export type AgentId = 'claude' | 'roo';
+export type AgentId = 'claude' | 'roo' | 'codex';
 
 /** What the client needs to render the agent picker. */
 export interface AgentInfo {
@@ -80,16 +80,27 @@ export type AgentSignal =
 export interface AgentProfile {
   id: AgentId;
   label: string;
+  /**
+   * Process model:
+   *  - 'persistent': one long-lived child; turns stream onto its stdin
+   *    (`buildArgs` once at spawn, `buildTurn` per turn). Claude, Roo.
+   *  - 'perTurn': a fresh child per turn with the prompt baked into argv; the
+   *    child runs one turn to completion and exits, resuming an existing session
+   *    by id (`buildPerTurnArgs`). Codex (`codex exec` / `codex exec resume`).
+   */
+  lifecycle: 'persistent' | 'perTurn';
   /** Resolve the binary to spawn from gateway config. */
   bin(config: GatewayConfig): string;
   /** Needs IS_SANDBOX to run with bypassed permissions as root (Claude does). */
   needsRootSandbox: boolean;
-  /** Build argv (excluding the binary itself). */
-  buildArgs(plan: SpawnPlan): string[];
-  /** Optional pre-spawn workspace prep (e.g. drop a rules file). */
+  /** Optional pre-spawn workspace prep (e.g. drop a rules / AGENTS.md file). */
   prepareWorkspace?(dir: string, systemPrompt: string): void;
-  /** Frame a user turn as one or more NDJSON stdin lines (no trailing newline). */
-  buildTurn(turn: UserTurn): string[];
+  /** persistent: build argv once at spawn (excluding the binary itself). */
+  buildArgs?(plan: SpawnPlan): string[];
+  /** persistent: frame a user turn as NDJSON stdin line(s) (no trailing newline). */
+  buildTurn?(turn: UserTurn): string[];
+  /** perTurn: the complete argv for a single turn (prompt + resume baked in). */
+  buildPerTurnArgs?(plan: SpawnPlan, turn: UserTurn): string[];
   /** Translate one native stdout event into zero or more session signals. */
   normalizeEvent(event: any, ctx: { knownSessionId: string | null }): AgentSignal[];
 }
@@ -102,6 +113,7 @@ export interface AgentProfile {
 const claudeProfile: AgentProfile = {
   id: 'claude',
   label: 'Claude Code',
+  lifecycle: 'persistent',
   needsRootSandbox: true,
   bin: (config) => config.claudeBin,
   buildArgs(plan) {
@@ -171,6 +183,7 @@ const IMAGE_ONLY_PROMPT = '(see the attached image — please act on it)';
 const rooProfile: AgentProfile = {
   id: 'roo',
   label: 'Roo Code',
+  lifecycle: 'persistent',
   needsRootSandbox: false,
   bin: (config) => config.rooBin,
   buildArgs(plan) {
@@ -309,12 +322,128 @@ function textDelta(text: string): AgentSignal {
 }
 
 // ---------------------------------------------------------------------------
+// Codex — OpenAI's CLI agent. Unlike Claude/Roo, `codex exec` is one-shot per
+// process: it runs a single turn and exits, and a follow-up is a fresh
+// `codex exec resume <thread_id>` process (lifecycle: 'perTurn'). The prompt
+// rides in argv; the resumable session id is the `thread_id` Codex reports in
+// its `thread.started` event (we can't pre-assign it). Codex self-configures
+// its provider (ChatGPT login or API key in ~/.codex); the gateway passes none.
+// Event/item shapes are from openai/codex sdk/typescript/src/{events,items}.ts.
+// We run with approvals + sandbox bypassed for parity with Claude/Roo (which run
+// fully unsandboxed); the same DASHTERM_AGENT_ALLOW_ROOT gate applies.
+// ---------------------------------------------------------------------------
+
+function codexErr(error: unknown): string {
+  if (error && typeof error === 'object' && 'message' in error) {
+    return String((error as { message: unknown }).message ?? 'codex error');
+  }
+  return String(error ?? 'codex error');
+}
+
+// Map one Codex thread item to client-facing signals. `completed` is false for
+// item.started (used to announce a running command), true for item.completed.
+function codexItemSignals(item: any, completed: boolean): AgentSignal[] {
+  if (!item || typeof item !== 'object') return [];
+  switch (item.type) {
+    case 'agent_message':
+      return completed && item.text
+        ? [{ kind: 'event', event: { type: 'assistant', message: { content: [{ type: 'text', text: item.text }] } } }]
+        : [];
+    case 'command_execution':
+      if (!completed) {
+        return item.command
+          ? [{ kind: 'event', event: { type: 'assistant', message: { content: [{ type: 'tool_use', name: 'execute_command', input: { command: item.command } }] } } }]
+          : [];
+      }
+      return typeof item.aggregated_output === 'string' && item.aggregated_output.length
+        ? [{ kind: 'event', event: { type: 'user', message: { content: [{ type: 'tool_result', content: item.aggregated_output }] } } }]
+        : [];
+    case 'file_change': {
+      if (!completed) return [];
+      const summary = Array.isArray(item.changes)
+        ? item.changes.map((c: any) => `${c.kind} ${c.path}`).join(', ')
+        : '';
+      return [{ kind: 'event', event: { type: 'assistant', message: { content: [{ type: 'tool_use', name: 'apply_patch', input: { summary } }] } } }];
+    }
+    case 'mcp_tool_call':
+      return completed
+        ? [{ kind: 'event', event: { type: 'assistant', message: { content: [{ type: 'tool_use', name: `${item.server}/${item.tool}`, input: item.arguments }] } } }]
+        : [];
+    case 'web_search':
+      return completed
+        ? [{ kind: 'event', event: { type: 'assistant', message: { content: [{ type: 'tool_use', name: 'web_search', input: { query: item.query } }] } } }]
+        : [];
+    case 'error':
+      return completed && item.message ? [{ kind: 'error', error: String(item.message) }] : [];
+    // reasoning + todo_list are intentionally dropped to keep the log readable.
+    default:
+      return [];
+  }
+}
+
+const codexProfile: AgentProfile = {
+  id: 'codex',
+  label: 'Codex',
+  lifecycle: 'perTurn',
+  needsRootSandbox: false,
+  bin: (config) => config.codexBin,
+  prepareWorkspace(dir, systemPrompt) {
+    // Codex reads AGENTS.md natively — drop the authoring contract there so it
+    // applies to every turn (including resumes); buildPerTurnArgs additionally
+    // prepends it to a fresh thread's first prompt for guaranteed delivery.
+    try {
+      fs.writeFileSync(path.join(dir, 'AGENTS.md'), systemPrompt);
+    } catch {
+      /* best-effort — the fresh-thread prepend still delivers the contract */
+    }
+  },
+  buildPerTurnArgs(plan, turn) {
+    const isResume = !!plan.resumeId;
+    const userText = turn.text || 'Please continue.';
+    const prompt = isResume
+      ? userText
+      : `${turn.systemPrompt}\n\n----- BEGIN USER REQUEST -----\n\n${userText}`;
+    const head = isResume ? ['exec', 'resume', plan.resumeId as string] : ['exec'];
+    return [
+      ...head,
+      '--json',
+      // Parity with Claude/Roo (fully unsandboxed); gated by DASHTERM_AGENT_ALLOW_ROOT.
+      '--dangerously-bypass-approvals-and-sandbox',
+      '--skip-git-repo-check',
+      '-C',
+      plan.workspaceDir,
+      prompt,
+    ];
+  },
+  normalizeEvent(event, ctx) {
+    const t = event?.type;
+    if (t === 'thread.started') {
+      void ctx;
+      return event.thread_id
+        ? [
+            { kind: 'session', sessionId: event.thread_id },
+            { kind: 'event', event: { type: 'system', subtype: 'init', session_id: event.thread_id } },
+          ]
+        : [];
+    }
+    if (t === 'turn.completed') return [{ kind: 'turn_end', isError: false }];
+    if (t === 'turn.failed') return [{ kind: 'error', error: codexErr(event.error) }, { kind: 'turn_end', isError: true }];
+    if (t === 'error') return [{ kind: 'error', error: String(event.message || 'codex error') }, { kind: 'turn_end', isError: true }];
+    if (t === 'item.started') return codexItemSignals(event.item, false);
+    if (t === 'item.completed') return codexItemSignals(event.item, true);
+    // turn.started, item.updated (full snapshots; no stateless delta) → ignore.
+    return [];
+  },
+};
+
+// ---------------------------------------------------------------------------
 // Registry
 // ---------------------------------------------------------------------------
 
 const PROFILES: Record<AgentId, AgentProfile> = {
   claude: claudeProfile,
   roo: rooProfile,
+  codex: codexProfile,
 };
 
 /** All agents the operator has turned on, in display order. */
@@ -322,6 +451,7 @@ export function availableAgents(config: GatewayConfig): AgentInfo[] {
   const all: AgentInfo[] = [
     { id: 'claude', label: claudeProfile.label, enabled: config.agentEnabled },
     { id: 'roo', label: rooProfile.label, enabled: config.agentEnabled && config.rooEnabled },
+    { id: 'codex', label: codexProfile.label, enabled: config.agentEnabled && config.codexEnabled },
   ];
   return all.filter((a) => a.enabled);
 }

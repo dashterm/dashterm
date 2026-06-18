@@ -12,6 +12,7 @@ import path from 'node:path';
 import { daemonStatus } from '../daemon';
 import { detectClaude, readClaudeExpiry } from '../lib/claude-auth';
 import { detectRoo, summariseRoo } from '../lib/roo-auth';
+import { detectCodex, summariseCodex } from '../lib/codex-auth';
 import { c, info, success, warn } from '../lib/log';
 
 function line(label: string, value: string): void {
@@ -77,6 +78,22 @@ export async function doctorCommand(args: string[]): Promise<number> {
     warn('  no provider key — set one in ~/.config/roo/settings.json or e.g. OPENROUTER_API_KEY');
   }
   info(c.gray('  (Roo enabled by DASHTERM_ROO_ENABLED=1; `dashterm setup` sets it)'));
+  info('');
+
+  // --- Codex ---
+  info(c.bold('Codex (agentic coder)'));
+  const codex = detectCodex();
+  if (codex.installed) {
+    success(`  installed  ${codex.binPath}`);
+  } else {
+    warn('  not installed — `npm i -g @openai/codex` (or `brew install codex`, or set DASHTERM_CODEX_BIN)');
+  }
+  if (codex.credsPresent) {
+    success(`  signed in (${summariseCodex(codex)})`);
+  } else if (codex.installed) {
+    warn('  not signed in — run `codex login` (or set OPENAI_API_KEY)');
+  }
+  info(c.gray('  (Codex enabled by DASHTERM_CODEX_ENABLED=1; `dashterm setup` sets it)'));
   info('');
 
   // --- Daemon ---

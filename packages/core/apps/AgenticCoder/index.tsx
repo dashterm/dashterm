@@ -1450,6 +1450,9 @@ function summariseToolInput(name: string, input: any): string {
   }
   if (name === 'search_files') return `${input.regex || ''} ${input.path ? `in ${input.path}` : ''}`.trim();
   if (name === 'ask_followup_question') return truncate(input.question || '', 120);
+  // Codex tool names.
+  if (name === 'apply_patch') return truncate(input.summary || '', 120);
+  if (name === 'web_search') return truncate(input.query || '', 120);
   return truncate(JSON.stringify(input), 120);
 }
 

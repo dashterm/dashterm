@@ -45,6 +45,9 @@ export function installLinux(
   if (env.rooEnabled) {
     extra.push(`Environment="DASHTERM_ROO_ENABLED=1"`);
   }
+  if (env.codexEnabled) {
+    extra.push(`Environment="DASHTERM_CODEX_ENABLED=1"`);
+  }
   const extraEnv = extra.join('\n');
   const body = renderTemplate(LINUX_SERVICE_TEMPLATE, {
     NODE_BIN: nodeBin,

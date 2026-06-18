@@ -4,8 +4,8 @@
  *
  * Interactive (a TTY, no --email/--password): a clack wizard that
  *   1. creates the admin account (only if no users exist yet),
- *   2. lets you tick the AI coding agents to enable (spacebar) — Claude Code
- *      and Roo Code today, Codex / Grok Build shown greyed-out as "coming soon",
+ *   2. lets you tick the AI coding agents to enable (spacebar) — Claude Code,
+ *      Roo Code and Codex today, Grok Build shown greyed-out as "coming soon",
  *   3. checks each selected agent is installed + configured and guides you if not,
  *   4. toggles "start at login" (the autostart daemon) on/off.
  * Re-running on an installed system skips account creation but still lets you
@@ -23,6 +23,7 @@ import { installDaemon, isDaemonInstalled, uninstallDaemon } from '../daemon';
 import { gatewayLogPath } from '../daemon/paths';
 import { type ClaudeStatus, detectClaude, summariseClaude } from '../lib/claude-auth';
 import { type RooStatus, detectRoo, summariseRoo } from '../lib/roo-auth';
+import { type CodexStatus, detectCodex, summariseCodex } from '../lib/codex-auth';
 import { c, error, info, success, warn } from '../lib/log';
 
 interface OnboardFlags {
@@ -267,15 +268,16 @@ async function runWizard(mod: ServerModule, db: Db, dir: string): Promise<number
     p.log.info(`${userCount(db)} user(s) already exist — leaving accounts as-is.`);
   }
 
-  // 2. AI coding agents — Codex / Grok Build are visibly greyed out + unselectable.
+  // 2. AI coding agents — Grok Build is visibly greyed out + unselectable.
   const claude = detectClaude();
   const roo = detectRoo();
+  const codex = detectCodex();
   const agents = await p.multiselect<string>({
     message: 'AI coding agents  (↑/↓ move · space toggle · enter confirm)',
     options: [
       { value: 'claude', label: 'Claude Code', hint: summariseClaude(claude) },
       { value: 'roo', label: 'Roo Code', hint: summariseRoo(roo) },
-      { value: 'codex', label: 'Codex', hint: 'coming soon', disabled: true },
+      { value: 'codex', label: 'Codex', hint: summariseCodex(codex) },
       { value: 'grok', label: 'Grok Build', hint: 'coming soon', disabled: true },
     ],
     initialValues: ['claude'],
@@ -284,11 +286,13 @@ async function runWizard(mod: ServerModule, db: Db, dir: string): Promise<number
   if (p.isCancel(agents)) onCancel();
   const wantClaude = agents.includes('claude');
   const wantRoo = agents.includes('roo');
-  const wantAgent = wantClaude || wantRoo;
+  const wantCodex = agents.includes('codex');
+  const wantAgent = wantClaude || wantRoo || wantCodex;
 
   // 3. Agent auth gates — detect + guide (we can't run the agents' logins).
   if (wantClaude) await ensureClaudeAuth(claude);
   if (wantRoo) await ensureRooAuth(roo);
+  if (wantCodex) await ensureCodexAuth(codex);
 
   // 3b. Root + agent: Claude Code refuses bypassed-permissions as root, and
   // overriding it lets the agent run any command as root — so make it an
@@ -365,6 +369,7 @@ async function runWizard(mod: ServerModule, db: Db, dir: string): Promise<number
     (bind !== '127.0.0.1' ? `DASHTERM_BIND=${bind} ` : '') +
     (wantAgent ? 'DASHTERM_AGENT_ENABLED=1 ' : '') +
     (wantRoo ? 'DASHTERM_ROO_ENABLED=1 ' : '') +
+    (wantCodex ? 'DASHTERM_CODEX_ENABLED=1 ' : '') +
     (agentAllowRoot ? 'DASHTERM_AGENT_ALLOW_ROOT=1 ' : '');
   const manualStart = `${startEnv}dashterm start`;
 
@@ -379,6 +384,7 @@ async function runWizard(mod: ServerModule, db: Db, dir: string): Promise<number
         agentEnabled: wantAgent,
         agentAllowRoot,
         rooEnabled: wantRoo,
+        codexEnabled: wantCodex,
       });
       sp.stop(`Autostart on → ${unit}`);
       summary.push('Gateway is running now and relaunches on login.');
@@ -499,6 +505,54 @@ async function ensureRooAuth(initial: RooStatus): Promise<void> {
     });
     if (p.isCancel(choice) || choice === 'continue') return;
     s = detectRoo();
+  }
+}
+
+async function ensureCodexAuth(initial: CodexStatus): Promise<void> {
+  let s = initial;
+  while (true) {
+    if (s.installed && s.credsPresent) {
+      p.log.success('Codex is installed and signed in.');
+      return;
+    }
+    if (!s.installed) {
+      p.note(
+        [
+          "The Codex CLI isn't on your PATH.",
+          '',
+          'Install it:',
+          '  npm install -g @openai/codex   (or: brew install codex)',
+          '  (or set DASHTERM_CODEX_BIN to its location)',
+          '',
+          'Then sign in (see below).',
+        ].join('\n'),
+        'Codex not found',
+      );
+    } else {
+      p.note(
+        [
+          'Codex is installed but not signed in yet.',
+          '',
+          'Sign in with either:',
+          '  • ChatGPT:  run  codex login   (headless: codex login --device-auth)',
+          '  • API key:  run  codex login --with-api-key  (or set OPENAI_API_KEY)',
+          '',
+          'Prefer `codex login` — it persists to ~/.codex so the autostart daemon',
+          'sees it. Confirm with  codex login status.',
+        ].join('\n'),
+        'Codex not signed in',
+      );
+    }
+    const choice = await p.select<string>({
+      message: 'Re-check now, or continue and sort it out later?',
+      options: [
+        { value: 'recheck', label: 'Re-check' },
+        { value: 'continue', label: 'Continue anyway' },
+      ],
+      initialValue: 'recheck',
+    });
+    if (p.isCancel(choice) || choice === 'continue') return;
+    s = detectCodex();
   }
 }
 

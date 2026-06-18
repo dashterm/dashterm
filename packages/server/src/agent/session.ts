@@ -131,6 +131,11 @@ export class AgentSession {
   private spawnedAsResume = false;
   // Authoring contract for the active spawn; some agents deliver it in-band.
   private systemPrompt = '';
+  // perTurn agents (Codex) spawn a fresh child per turn that exits when the turn
+  // ends, so the turn is finished on process close rather than on a turn_end
+  // event. This captures the turn's error state for the close handler.
+  private perTurn = false;
+  private pendingTurnError = false;
 
   constructor(
     private readonly socket: SocketLike,
@@ -213,11 +218,13 @@ export class AgentSession {
     const requested = typeof agent === 'string' ? agent : 'claude';
     this.agentId = isAgentEnabled(this.config, requested) ? (requested as AgentId) : 'claude';
     this.profile = getProfile(this.agentId);
+    this.perTurn = this.profile.lifecycle === 'perTurn';
     // Switching workspace or agent means a different session — tear down first.
     this.killChild();
     this.everSpawned = false;
     this.currentSessionId = null;
     this.sentStart = false;
+    this.pendingTurnError = false;
     this.resumeMode = resume !== false;
     this.workspace = ws;
     this.dir = ensureWorkspace(this.config, this.uid, ws);
@@ -306,11 +313,17 @@ export class AgentSession {
     const images = (msg.images ?? []).filter((img) => img?.data);
     if (!text && images.length === 0) return;
 
+    const requestId = randomUUID();
+    if (this.perTurn) {
+      this.startPerTurn({ text, images, requestId });
+      return;
+    }
+
+    // Persistent agents (Claude, Roo): one long-lived child, turns streamed onto
+    // its stdin.
     const child = this.ensureChild();
     if (!child) return;
-
-    const requestId = randomUUID();
-    const lines = this.profile.buildTurn({
+    const lines = this.profile.buildTurn!({
       text,
       images,
       requestId,
@@ -332,24 +345,88 @@ export class AgentSession {
     }
   }
 
-  /** Spawn (or reuse) the agent child for the active workspace. */
+  /**
+   * perTurn agents (Codex): spawn a fresh child for this turn with the prompt in
+   * argv (resuming the prior session by id). The child runs one turn and exits;
+   * the turn is finished from the close handler.
+   */
+  private startPerTurn(turn: { text: string; images: Array<{ mediaType: string; data: string }>; requestId: string }): void {
+    this.killChild(); // never reuse — each turn is a fresh one-shot process
+    const { resumeId } = this.resolveSession(false);
+    const sshBin = this.prepareSpawnEnv();
+    const args = this.profile.buildPerTurnArgs!(
+      {
+        resumeId,
+        assignId: null,
+        systemPrompt: this.systemPrompt,
+        permissionMode: this.config.agentPermissionMode,
+        model: this.config.claudeModel,
+        workspaceDir: this.dir,
+      },
+      {
+        text: turn.text,
+        images: turn.images,
+        requestId: turn.requestId,
+        isFirstTurn: true,
+        isResume: this.spawnedAsResume,
+        sessionId: this.currentSessionId,
+        systemPrompt: this.systemPrompt,
+      },
+    );
+    const child = this.startChild(args, sshBin);
+    if (!child) return;
+    this.turnStartedAt = Date.now();
+    this.pendingTurnError = false;
+    this.turnActive = true;
+    // The prompt rides in argv; close stdin so the one-shot process doesn't wait.
+    try {
+      child.stdin.end();
+    } catch {
+      /* already gone */
+    }
+  }
+
+  /** Spawn (or reuse) the persistent agent child for the active workspace. */
   private ensureChild(): ChildProcessWithoutNullStreams | null {
     if (this.child) return this.child;
+    const { resumeId, assignId } = this.resolveSession(true);
+    const sshBin = this.prepareSpawnEnv();
+    const args = this.profile.buildArgs!({
+      resumeId,
+      assignId,
+      systemPrompt: this.systemPrompt,
+      permissionMode: this.config.agentPermissionMode,
+      model: this.config.claudeModel,
+      workspaceDir: this.dir,
+    });
+    return this.startChild(args, sshBin);
+  }
 
+  /**
+   * Decide the resume vs. fresh-session id for the next spawn. `allowAssign`
+   * pre-mints a new id up front (Claude/Roo); perTurn agents (Codex) pass false
+   * because the agent assigns its own session id, reported back via its stream.
+   */
+  private resolveSession(allowAssign: boolean): { resumeId: string | null; assignId: string | null } {
     const session = readSession(this.dir);
     // Continue the live session on respawn; honour an explicit resume request;
-    // otherwise start fresh with an id we assign up front. The resume id is
-    // per-agent (a Claude session can't be resumed by Roo and vice-versa).
+    // otherwise start fresh. The resume id is per-agent (a Claude session can't
+    // be resumed by Roo/Codex and vice-versa).
     let resumeId: string | null = null;
     let assignId: string | null = null;
     if (this.everSpawned && this.currentSessionId) resumeId = this.currentSessionId;
     else if (this.resumeMode) resumeId = getAgentResumeId(session, this.agentId) ?? null;
-    if (!resumeId) assignId = randomUUID();
-    this.currentSessionId = resumeId ?? assignId;
+    if (!resumeId && allowAssign) assignId = randomUUID();
+    this.currentSessionId = resumeId ?? assignId; // perTurn: may stay null until the agent reports its id
     this.spawnedAsResume = !!resumeId;
+    return { resumeId, assignId };
+  }
 
-    // Set up per-user SSH so the agent's Bash can `ssh <alias> '...'`. The wrapper
-    // dir goes first on PATH so `ssh`/`scp` resolve to the managed config.
+  /**
+   * Per-user SSH scaffold + system prompt + workspace prep, shared by both
+   * spawn paths. Returns the ssh wrapper dir to prepend to PATH (or null).
+   */
+  private prepareSpawnEnv(): string | null {
     let sshBin: string | null = null;
     let hostAliases: string[] = [];
     try {
@@ -359,23 +436,17 @@ export class AgentSession {
     } catch {
       sshBin = null;
     }
-
     this.systemPrompt = buildSystemPrompt(hostAliases);
     try {
       this.profile.prepareWorkspace?.(this.dir, this.systemPrompt);
     } catch {
       /* best-effort */
     }
+    return sshBin;
+  }
 
-    const args = this.profile.buildArgs({
-      resumeId,
-      assignId,
-      systemPrompt: this.systemPrompt,
-      permissionMode: this.config.agentPermissionMode,
-      model: this.config.claudeModel,
-      workspaceDir: this.dir,
-    });
-
+  /** Spawn the agent binary with `args` and wire stdout/stderr/close handlers. */
+  private startChild(args: string[], sshBin: string | null): ChildProcessWithoutNullStreams | null {
     const env: NodeJS.ProcessEnv = { ...process.env };
     if (sshBin) env.PATH = `${sshBin}:${process.env.PATH ?? ''}`;
     // Running the agent with bypassed permissions / auto-approval as root is full
@@ -422,11 +493,18 @@ export class AgentSession {
       if (text) this.send({ type: 'claude_log', stream: 'stderr', text });
     });
     child.on('error', (err) => {
+      if (this.perTurn) this.pendingTurnError = true;
       this.send({ type: 'error', error: `${this.profile.label} process error: ${err.message}` });
     });
     child.on('close', (code) => {
       if (this.child === child) this.child = null;
-      if (this.turnActive) {
+      if (!this.turnActive) return;
+      if (this.perTurn) {
+        // perTurn: the process exits when the turn ends; finish here so all
+        // output (final message + file writes) has flushed first.
+        this.turnActive = false;
+        void this.finishTurn(this.pendingTurnError || (code != null && code !== 0));
+      } else {
         this.turnActive = false;
         this.send({ type: 'session_end', code: code ?? 1 });
       }
@@ -473,8 +551,15 @@ export class AgentSession {
           // process after a user stop, or a redundant result+control:done pair —
           // so we don't forward a spurious line or emit a second session_end.
           if (!this.turnActive) break;
-          this.turnActive = false;
           if (sig.event !== undefined) this.send({ type: 'claude_event', event: sig.event });
+          if (this.perTurn) {
+            // The one-shot process exits next; finish from the close handler so
+            // the final message + any file writes have flushed. Just record the
+            // outcome here.
+            this.pendingTurnError = sig.isError;
+            break;
+          }
+          this.turnActive = false;
           void this.finishTurn(sig.isError);
           break;
       }
