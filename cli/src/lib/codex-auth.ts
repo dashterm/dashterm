@@ -4,8 +4,9 @@
  * The gateway can vibe-code apps by spawning `codex exec` / `codex exec resume`
  * (see packages/server/src/agent/agents.ts). Codex authenticates either by
  * ChatGPT sign-in (`codex login`) or an API key; either way credentials live in
- * ~/.codex/auth.json. The operator configures Codex itself (same model as Roo);
- * this module only *checks* that the binary is present and a credential source
+ * ~/.codex/auth.json. The operator configures Codex itself (self-configured —
+ * the gateway never sees the key); this module only *checks* that the binary is
+ * present and a credential source
  * exists, for onboarding + `dashterm doctor`.
  *
  * Install: `npm i -g @openai/codex` (or `brew install codex`).

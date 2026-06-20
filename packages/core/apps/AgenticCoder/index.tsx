@@ -32,7 +32,7 @@ interface Session {
 interface AgenticCoderState {
   // User-configurable so a user can point at their own self-hosted relay.
   relayUrl?: string;
-  // Which CLI coding agent this instance drives (e.g. 'claude', 'roo'). The
+  // Which CLI coding agent this instance drives (e.g. 'claude', 'codex'). The
   // gateway resumes a separate session per agent, so switching agents tears
   // down + re-auths. Defaults to 'claude'.
   agent?: string;
@@ -990,7 +990,7 @@ export default function AgenticCoder({ appState, onUpdate, relatedWorkspaceNames
           })}
           {availableAgents.length <= 1 && (
             <Text style={styles.hint}>
-              {`Only one agent is enabled — add another (e.g. Roo Code) with \`dashterm setup\`.`}
+              {`Only one agent is enabled — add another (e.g. Codex) with \`dashterm setup\`.`}
             </Text>
           )}
         </View>
@@ -1436,21 +1436,8 @@ function summariseToolInput(name: string, input: any): string {
   if (name === 'Write' || name === 'Edit' || name === 'Read') return input.file_path || '';
   if (name === 'Bash') return truncate(input.command || '', 120);
   if (name === 'Grep') return `${input.pattern || ''} ${input.path ? `in ${input.path}` : ''}`.trim();
-  // Roo Code tool names.
-  if (name === 'execute_command') return truncate(input.command || '', 120);
-  if (
-    name === 'write_to_file' ||
-    name === 'read_file' ||
-    name === 'apply_diff' ||
-    name === 'insert_content' ||
-    name === 'search_and_replace' ||
-    name === 'list_files'
-  ) {
-    return input.path || input.file_path || '';
-  }
-  if (name === 'search_files') return `${input.regex || ''} ${input.path ? `in ${input.path}` : ''}`.trim();
-  if (name === 'ask_followup_question') return truncate(input.question || '', 120);
   // Codex tool names.
+  if (name === 'execute_command') return truncate(input.command || '', 120);
   if (name === 'apply_patch') return truncate(input.summary || '', 120);
   if (name === 'web_search') return truncate(input.query || '', 120);
   return truncate(JSON.stringify(input), 120);

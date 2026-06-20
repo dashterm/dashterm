@@ -7,24 +7,23 @@
  * differences and keeps AgentSession itself agent-agnostic:
  *
  *   - which binary to spawn and which argv to pass;
- *   - how to frame a user turn on stdin. Claude takes one `user` message per
- *     turn (every turn looks the same). Roo's `--stdin-prompt-stream` protocol
- *     opens a task with a `start` command (carrying the resumable taskId) and
- *     sends each follow-up as a `message` command keyed by requestId;
+ *   - the process lifecycle: 'persistent' (one long-lived child, turns streamed
+ *     on stdin — Claude) vs 'perTurn' (a fresh child per turn that runs once and
+ *     exits, resuming by id — Codex's `codex exec`);
  *   - how to translate the agent's native NDJSON events into the *Claude-shaped*
  *     events the AgenticCoder client already renders. Normalising on the server
  *     means the client keeps a single renderer (renderClaudeEvent) regardless of
  *     which agent produced the stream.
  *
  * Adding an agent = adding a profile here + surfacing it from availableAgents().
- * Codex / Grok Build are intentionally absent until their CLIs ship a
- * resumable headless mode (see cli/src/commands/onboard.ts).
+ * Grok Build is intentionally absent until its CLI ships a resumable headless
+ * mode (see cli/src/commands/onboard.ts).
  */
 import fs from 'fs';
 import path from 'path';
 import type { GatewayConfig } from '../config';
 
-export type AgentId = 'claude' | 'roo' | 'codex';
+export type AgentId = 'claude' | 'codex';
 
 /** What the client needs to render the agent picker. */
 export interface AgentInfo {
@@ -45,21 +44,21 @@ export interface SpawnPlan {
   permissionMode: string;
   /** Model override, or null for the CLI default (Claude). */
   model: string | null;
-  /** Absolute path to the per-user workspace dir (Roo's -w / cwd). */
+  /** Absolute path to the per-user workspace dir (the agent's cwd / -C). */
   workspaceDir: string;
 }
 
-/** One user turn to frame onto the child's stdin. */
+/** One user turn to frame onto the child's stdin (or argv for perTurn agents). */
 export interface UserTurn {
   text: string;
   images: Array<{ mediaType: string; data: string }>;
-  /** Correlation id for this turn (Roo echoes it on control events). */
+  /** Correlation id for this turn (for agents that echo it on their events). */
   requestId: string;
   /** True when this is the first turn for the current child process. */
   isFirstTurn: boolean;
   /** True when the current child was spawned to resume an existing session. */
   isResume: boolean;
-  /** The session/task id of the current child (Roo's start taskId). */
+  /** The session/task id of the current child, when known up front. */
   sessionId: string | null;
   /** Authoring contract — delivered in-band by agents without a system-prompt flag. */
   systemPrompt: string;
@@ -83,7 +82,7 @@ export interface AgentProfile {
   /**
    * Process model:
    *  - 'persistent': one long-lived child; turns stream onto its stdin
-   *    (`buildArgs` once at spawn, `buildTurn` per turn). Claude, Roo.
+   *    (`buildArgs` once at spawn, `buildTurn` per turn). Claude.
    *  - 'perTurn': a fresh child per turn with the prompt baked into argv; the
    *    child runs one turn to completion and exits, resuming an existing session
    *    by id (`buildPerTurnArgs`). Codex (`codex exec` / `codex exec resume`).
@@ -163,173 +162,14 @@ const claudeProfile: AgentProfile = {
 };
 
 // ---------------------------------------------------------------------------
-// Roo Code — runs `roo --print --stdin-prompt-stream --output-format
-// stream-json`. The user configures Roo's own provider/key (settings.json or an
-// *_API_KEY env var); the gateway passes no credentials. The resumable session
-// id is the start command's taskId (a UUID we assign), so — unlike Claude — we
-// already know it before spawn and never read it back from an init event.
-// Event field shapes are from apps/cli/src/agent/json-event-emitter.ts.
-// ---------------------------------------------------------------------------
-
-function toDataUrls(images: UserTurn['images']): string[] {
-  return images
-    .filter((i) => i?.data)
-    .map((i) => `data:${i.mediaType || 'image/png'};base64,${i.data}`);
-}
-
-// Roo's stdin parser rejects an empty prompt, so image-only turns still need text.
-const IMAGE_ONLY_PROMPT = '(see the attached image — please act on it)';
-
-const rooProfile: AgentProfile = {
-  id: 'roo',
-  label: 'Roo Code',
-  lifecycle: 'persistent',
-  needsRootSandbox: false,
-  bin: (config) => config.rooBin,
-  buildArgs(plan) {
-    // Auto-approval is Roo's default (we deliberately omit --require-approval),
-    // matching Claude's bypassPermissions. Provider/model/key come from Roo's
-    // own config, so we pass none. The session id rides on the start command's
-    // taskId, not an argv flag.
-    return [
-      '--print',
-      '--stdin-prompt-stream',
-      '--output-format',
-      'stream-json',
-      '-w',
-      plan.workspaceDir,
-    ];
-  },
-  prepareWorkspace(dir, systemPrompt) {
-    // Roo has no --append-system-prompt; a workspace rules file is picked up on
-    // every turn (including resumes). We ALSO prepend the contract to a fresh
-    // start prompt (see buildTurn) as a guaranteed-delivery belt-and-braces.
-    try {
-      const rulesDir = path.join(dir, '.roo', 'rules');
-      fs.mkdirSync(rulesDir, { recursive: true });
-      fs.writeFileSync(path.join(rulesDir, '01-dashterm-authoring.md'), systemPrompt);
-    } catch {
-      /* best-effort — buildTurn's prepend still delivers the contract */
-    }
-  },
-  buildTurn(turn) {
-    const prompt = turn.text || IMAGE_ONLY_PROMPT;
-    const images = toDataUrls(turn.images);
-    if (turn.isFirstTurn) {
-      // On a fresh session prepend the authoring contract so Roo learns the
-      // dashterm app format even if the rules file isn't honoured; on resume the
-      // contract is already in history + the rules file, so don't repeat it.
-      const startPrompt = turn.isResume
-        ? prompt
-        : `${turn.systemPrompt}\n\n----- BEGIN USER REQUEST -----\n\n${prompt}`;
-      const cmd: Record<string, unknown> = {
-        command: 'start',
-        requestId: turn.requestId,
-        prompt: startPrompt,
-      };
-      if (turn.sessionId) cmd.taskId = turn.sessionId; // resume or create-with-id
-      if (images.length) cmd.images = images;
-      return [JSON.stringify(cmd)];
-    }
-    const cmd: Record<string, unknown> = {
-      command: 'message',
-      requestId: turn.requestId,
-      prompt,
-    };
-    if (images.length) cmd.images = images;
-    return [JSON.stringify(cmd)];
-  },
-  normalizeEvent(event, ctx) {
-    const t = event?.type;
-
-    // The init event carries no session id; surface the one we assigned so the
-    // client can print its "<agent> session <id>" line.
-    if (t === 'system' && event?.subtype === 'init') {
-      return ctx.knownSessionId
-        ? [{ kind: 'event', event: { type: 'system', subtype: 'init', session_id: ctx.knownSessionId } }]
-        : [];
-    }
-
-    // control:done is the per-turn completion signal in stdin-stream mode.
-    if (t === 'control') {
-      if (event.subtype === 'done') return [{ kind: 'turn_end', isError: event.success === false }];
-      if (event.subtype === 'error') {
-        const msg = String(event.content || event.code || 'roo error');
-        return [{ kind: 'error', error: msg }, { kind: 'turn_end', isError: true }];
-      }
-      return []; // ack — nothing to show
-    }
-
-    // A taskCompleted result is a redundant completion signal; the session's
-    // turnActive guard makes a second turn_end idempotent.
-    if (t === 'result') return [{ kind: 'turn_end', isError: event.success === false }];
-
-    if (t === 'error') return [{ kind: 'error', error: String(event.content || 'roo error') }];
-
-    // assistant: partials carry deltas (feed the live preview), the final
-    // (done) carries the full text (append it as a log line, clearing preview).
-    if (t === 'assistant') {
-      if (event.done) {
-        return typeof event.content === 'string' && event.content.length
-          ? [{ kind: 'event', event: { type: 'assistant', message: { content: [{ type: 'text', text: event.content }] } } }]
-          : [];
-      }
-      return typeof event.content === 'string' && event.content.length
-        ? [textDelta(event.content)]
-        : [];
-    }
-
-    // reasoning — show progress in the preview only; don't persist a line.
-    if (t === 'thinking') {
-      return !event.done && typeof event.content === 'string' && event.content.length
-        ? [textDelta(event.content)]
-        : [];
-    }
-
-    // The first say:text is the echoed user prompt; the client already shows the
-    // user's message locally, so drop Roo's echo + any user_feedback.
-    if (t === 'user') return [];
-
-    // tool_use — only the completed (non-partial) call, to skip delta noise.
-    if (t === 'tool_use') {
-      if (event.done && event.tool_use) {
-        const name = event.tool_use.name || 'tool';
-        return [
-          { kind: 'event', event: { type: 'assistant', message: { content: [{ type: 'tool_use', name, input: event.tool_use.input }] } } },
-        ];
-      }
-      return [];
-    }
-
-    // tool_result — forward any chunk that carries output, rendered as `← …`.
-    if (t === 'tool_result') {
-      const out = event.tool_result?.output;
-      return typeof out === 'string' && out.length
-        ? [{ kind: 'event', event: { type: 'user', message: { content: [{ type: 'tool_result', content: out }] } } }]
-        : [];
-    }
-
-    return []; // queue snapshots and anything unmapped
-  },
-};
-
-/** Build a Claude-shaped streaming text delta (feeds the client's live preview). */
-function textDelta(text: string): AgentSignal {
-  return {
-    kind: 'event',
-    event: { type: 'stream_event', event: { type: 'content_block_delta', delta: { type: 'text_delta', text } } },
-  };
-}
-
-// ---------------------------------------------------------------------------
-// Codex — OpenAI's CLI agent. Unlike Claude/Roo, `codex exec` is one-shot per
+// Codex — OpenAI's CLI agent. Unlike Claude, `codex exec` is one-shot per
 // process: it runs a single turn and exits, and a follow-up is a fresh
 // `codex exec resume <thread_id>` process (lifecycle: 'perTurn'). The prompt
 // rides in argv; the resumable session id is the `thread_id` Codex reports in
 // its `thread.started` event (we can't pre-assign it). Codex self-configures
 // its provider (ChatGPT login or API key in ~/.codex); the gateway passes none.
 // Event/item shapes are from openai/codex sdk/typescript/src/{events,items}.ts.
-// We run with approvals + sandbox bypassed for parity with Claude/Roo (which run
+// We run with approvals + sandbox bypassed for parity with Claude (which runs
 // fully unsandboxed); the same DASHTERM_AGENT_ALLOW_ROOT gate applies.
 // ---------------------------------------------------------------------------
 
@@ -403,15 +243,19 @@ const codexProfile: AgentProfile = {
     const prompt = isResume
       ? userText
       : `${turn.systemPrompt}\n\n----- BEGIN USER REQUEST -----\n\n${userText}`;
-    const head = isResume ? ['exec', 'resume', plan.resumeId as string] : ['exec'];
+    // `-C/--cd` is a TOP-LEVEL codex flag and must precede the subcommand: the
+    // `exec resume` sub-subcommand rejects it ("unexpected argument '-C'"). The
+    // subcommand-level flags (--json / sandbox / git) are valid on both `exec`
+    // and `exec resume`, and the session id is `resume`'s first positional.
+    const sub = isResume ? ['exec', 'resume', plan.resumeId as string] : ['exec'];
     return [
-      ...head,
-      '--json',
-      // Parity with Claude/Roo (fully unsandboxed); gated by DASHTERM_AGENT_ALLOW_ROOT.
-      '--dangerously-bypass-approvals-and-sandbox',
-      '--skip-git-repo-check',
       '-C',
       plan.workspaceDir,
+      ...sub,
+      '--json',
+      // Parity with Claude (fully unsandboxed); gated by DASHTERM_AGENT_ALLOW_ROOT.
+      '--dangerously-bypass-approvals-and-sandbox',
+      '--skip-git-repo-check',
       prompt,
     ];
   },
@@ -442,7 +286,6 @@ const codexProfile: AgentProfile = {
 
 const PROFILES: Record<AgentId, AgentProfile> = {
   claude: claudeProfile,
-  roo: rooProfile,
   codex: codexProfile,
 };
 
@@ -450,7 +293,6 @@ const PROFILES: Record<AgentId, AgentProfile> = {
 export function availableAgents(config: GatewayConfig): AgentInfo[] {
   const all: AgentInfo[] = [
     { id: 'claude', label: claudeProfile.label, enabled: config.agentEnabled },
-    { id: 'roo', label: rooProfile.label, enabled: config.agentEnabled && config.rooEnabled },
     { id: 'codex', label: codexProfile.label, enabled: config.agentEnabled && config.codexEnabled },
   ];
   return all.filter((a) => a.enabled);

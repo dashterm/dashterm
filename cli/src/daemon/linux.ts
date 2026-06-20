@@ -42,9 +42,6 @@ export function installLinux(
   if (env.agentAllowRoot) {
     extra.push(`Environment="DASHTERM_AGENT_ALLOW_ROOT=1"`);
   }
-  if (env.rooEnabled) {
-    extra.push(`Environment="DASHTERM_ROO_ENABLED=1"`);
-  }
   if (env.codexEnabled) {
     extra.push(`Environment="DASHTERM_CODEX_ENABLED=1"`);
   }

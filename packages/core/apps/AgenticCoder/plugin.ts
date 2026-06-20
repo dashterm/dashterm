@@ -54,7 +54,7 @@ export const agenticCoderPlugin: AppDefinition<AgenticCoderState> = {
   id: 'agenticcoder',
   type: 'agenticcoder',
   title: 'AGENTIC CODER',
-  description: 'Build custom apps by chatting with a preconfigured CLI coding agent (Claude Code, Roo Code)',
+  description: 'Build custom apps by chatting with a preconfigured CLI coding agent (Claude Code, Codex)',
   icon: '🛠',
   component: ({ state, updateState }: AppComponentProps) =>
     React.createElement(AgenticCoder, { appState: state, onUpdate: updateState }),

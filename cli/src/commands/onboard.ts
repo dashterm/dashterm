@@ -4,8 +4,8 @@
  *
  * Interactive (a TTY, no --email/--password): a clack wizard that
  *   1. creates the admin account (only if no users exist yet),
- *   2. lets you tick the AI coding agents to enable (spacebar) — Claude Code,
- *      Roo Code and Codex today, Grok Build shown greyed-out as "coming soon",
+ *   2. lets you tick the AI coding agents to enable (spacebar) — Claude Code
+ *      and Codex today, Grok Build shown greyed-out as "coming soon",
  *   3. checks each selected agent is installed + configured and guides you if not,
  *   4. toggles "start at login" (the autostart daemon) on/off.
  * Re-running on an installed system skips account creation but still lets you
@@ -22,7 +22,6 @@ import * as p from '@clack/prompts';
 import { installDaemon, isDaemonInstalled, uninstallDaemon } from '../daemon';
 import { gatewayLogPath } from '../daemon/paths';
 import { type ClaudeStatus, detectClaude, summariseClaude } from '../lib/claude-auth';
-import { type RooStatus, detectRoo, summariseRoo } from '../lib/roo-auth';
 import { type CodexStatus, detectCodex, summariseCodex } from '../lib/codex-auth';
 import { c, error, info, success, warn } from '../lib/log';
 
@@ -270,13 +269,11 @@ async function runWizard(mod: ServerModule, db: Db, dir: string): Promise<number
 
   // 2. AI coding agents — Grok Build is visibly greyed out + unselectable.
   const claude = detectClaude();
-  const roo = detectRoo();
   const codex = detectCodex();
   const agents = await p.multiselect<string>({
     message: 'AI coding agents  (↑/↓ move · space toggle · enter confirm)',
     options: [
       { value: 'claude', label: 'Claude Code', hint: summariseClaude(claude) },
-      { value: 'roo', label: 'Roo Code', hint: summariseRoo(roo) },
       { value: 'codex', label: 'Codex', hint: summariseCodex(codex) },
       { value: 'grok', label: 'Grok Build', hint: 'coming soon', disabled: true },
     ],
@@ -285,13 +282,11 @@ async function runWizard(mod: ServerModule, db: Db, dir: string): Promise<number
   });
   if (p.isCancel(agents)) onCancel();
   const wantClaude = agents.includes('claude');
-  const wantRoo = agents.includes('roo');
   const wantCodex = agents.includes('codex');
-  const wantAgent = wantClaude || wantRoo || wantCodex;
+  const wantAgent = wantClaude || wantCodex;
 
   // 3. Agent auth gates — detect + guide (we can't run the agents' logins).
   if (wantClaude) await ensureClaudeAuth(claude);
-  if (wantRoo) await ensureRooAuth(roo);
   if (wantCodex) await ensureCodexAuth(codex);
 
   // 3b. Root + agent: Claude Code refuses bypassed-permissions as root, and
@@ -368,7 +363,6 @@ async function runWizard(mod: ServerModule, db: Db, dir: string): Promise<number
   const startEnv =
     (bind !== '127.0.0.1' ? `DASHTERM_BIND=${bind} ` : '') +
     (wantAgent ? 'DASHTERM_AGENT_ENABLED=1 ' : '') +
-    (wantRoo ? 'DASHTERM_ROO_ENABLED=1 ' : '') +
     (wantCodex ? 'DASHTERM_CODEX_ENABLED=1 ' : '') +
     (agentAllowRoot ? 'DASHTERM_AGENT_ALLOW_ROOT=1 ' : '');
   const manualStart = `${startEnv}dashterm start`;
@@ -383,7 +377,6 @@ async function runWizard(mod: ServerModule, db: Db, dir: string): Promise<number
         dataDir: dir,
         agentEnabled: wantAgent,
         agentAllowRoot,
-        rooEnabled: wantRoo,
         codexEnabled: wantCodex,
       });
       sp.stop(`Autostart on → ${unit}`);
@@ -456,55 +449,6 @@ async function ensureClaudeAuth(initial: ClaudeStatus): Promise<void> {
     });
     if (p.isCancel(choice) || choice === 'continue') return;
     s = detectClaude();
-  }
-}
-
-async function ensureRooAuth(initial: RooStatus): Promise<void> {
-  let s = initial;
-  while (true) {
-    if (s.installed && s.credsPresent) {
-      p.log.success('Roo Code is installed and a provider key is configured.');
-      return;
-    }
-    if (!s.installed) {
-      p.note(
-        [
-          "The Roo Code CLI isn't on your PATH.",
-          '',
-          'Install it:',
-          '  curl -fsSL https://raw.githubusercontent.com/RooCodeInc/Roo-Code/main/apps/cli/install.sh | sh',
-          '  (or set DASHTERM_ROO_BIN to its location)',
-          '',
-          'Then configure a provider key (see below).',
-        ].join('\n'),
-        'Roo not found',
-      );
-    } else {
-      p.note(
-        [
-          'Roo Code is installed but has no provider key yet.',
-          '',
-          'Give it one of:',
-          '  • a settings file at ~/.config/roo/settings.json, or',
-          '  • a provider env var, e.g.  export OPENROUTER_API_KEY=…',
-          '    (also reads ANTHROPIC_API_KEY / OPENAI_API_KEY / GOOGLE_API_KEY)',
-          '',
-          'Prefer the settings file — env vars set in your shell are not seen by',
-          'the autostart daemon. Confirm with  roo "hello" --print.',
-        ].join('\n'),
-        'Roo not configured',
-      );
-    }
-    const choice = await p.select<string>({
-      message: 'Re-check now, or continue and sort it out later?',
-      options: [
-        { value: 'recheck', label: 'Re-check' },
-        { value: 'continue', label: 'Continue anyway' },
-      ],
-      initialValue: 'recheck',
-    });
-    if (p.isCancel(choice) || choice === 'continue') return;
-    s = detectRoo();
   }
 }
 

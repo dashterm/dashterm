@@ -35,15 +35,10 @@ export interface GatewayConfig {
   agentAllowRoot: boolean;
   claudeBin: string;                   // `claude` binary to spawn
   claudeModel: string | null;          // --model override; null = CLI default
-  // Roo Code agent. The user picks the agent per AgenticCoder workspace; Roo
-  // is only offered to clients when rooEnabled is on (DASHTERM_ROO_ENABLED).
-  // Roo reads its own provider/key (~/.config/roo/settings.json or an *_API_KEY
-  // env var) — the gateway passes none.
-  rooEnabled: boolean;
-  rooBin: string;                      // `roo` binary to spawn
-  // Codex (OpenAI's CLI agent). Like Roo it's only offered to clients when
-  // codexEnabled is on (DASHTERM_CODEX_ENABLED), and self-configures its own
-  // provider (ChatGPT login or API key in ~/.codex) — the gateway passes none.
+  // Codex (OpenAI's CLI agent). The user picks the agent per AgenticCoder
+  // workspace; Codex is only offered to clients when codexEnabled is on
+  // (DASHTERM_CODEX_ENABLED), and self-configures its own provider (ChatGPT
+  // login or API key in ~/.codex) — the gateway passes none.
   codexEnabled: boolean;
   codexBin: string;                    // `codex` binary to spawn
   agentPermissionMode: string;         // --permission-mode value
@@ -89,10 +84,6 @@ export function loadConfig(overrides: Partial<GatewayConfig> = {}): GatewayConfi
     overrides.agentAllowRoot ??
     ['1', 'true', 'yes'].includes((process.env.DASHTERM_AGENT_ALLOW_ROOT ?? '').toLowerCase());
 
-  const rooEnabled =
-    overrides.rooEnabled ??
-    ['1', 'true', 'yes'].includes((process.env.DASHTERM_ROO_ENABLED ?? '').toLowerCase());
-
   const codexEnabled =
     overrides.codexEnabled ??
     ['1', 'true', 'yes'].includes((process.env.DASHTERM_CODEX_ENABLED ?? '').toLowerCase());
@@ -111,8 +102,6 @@ export function loadConfig(overrides: Partial<GatewayConfig> = {}): GatewayConfi
     agentAllowRoot,
     claudeBin: overrides.claudeBin ?? process.env.DASHTERM_CLAUDE_BIN ?? 'claude',
     claudeModel: overrides.claudeModel ?? process.env.DASHTERM_CLAUDE_MODEL ?? null,
-    rooEnabled,
-    rooBin: overrides.rooBin ?? process.env.DASHTERM_ROO_BIN ?? 'roo',
     codexEnabled,
     codexBin: overrides.codexBin ?? process.env.DASHTERM_CODEX_BIN ?? 'codex',
     agentPermissionMode:

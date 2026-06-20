@@ -1,6 +1,6 @@
 /**
  * One AgentSession per /api/agent/ws connection. Owns a single coding-agent
- * child process (Claude Code or Roo Code — the user picks per workspace) for the
+ * child process (Claude Code or Codex — the user picks per workspace) for the
  * active workspace, bridges the WebSocket protocol the AgenticCoder client
  * speaks to the CLI's stream-json stdio, and pushes generated apps after each
  * turn. Agent-specific argv/stdin/event details live in ./agents (AgentProfile);
@@ -123,9 +123,9 @@ export class AgentSession {
   private disposed = false;
   private agentId: AgentId = 'claude';
   private profile: AgentProfile = getProfile('claude');
-  // Whether the current child has been handed its opening turn. Roo's protocol
-  // opens a task with `start` then sends follow-ups as `message`; reset whenever
-  // a new child spawns so a respawn re-opens (and resumes) the task.
+  // Whether the current child has been handed its opening turn — for persistent
+  // agents that frame the first turn differently from follow-ups. Reset whenever
+  // a new child spawns so a respawn re-opens the session.
   private sentStart = false;
   // Whether the current child was spawned to resume an existing session.
   private spawnedAsResume = false;
@@ -319,7 +319,7 @@ export class AgentSession {
       return;
     }
 
-    // Persistent agents (Claude, Roo): one long-lived child, turns streamed onto
+    // Persistent agents (Claude): one long-lived child, turns streamed onto
     // its stdin.
     const child = this.ensureChild();
     if (!child) return;
@@ -404,14 +404,14 @@ export class AgentSession {
 
   /**
    * Decide the resume vs. fresh-session id for the next spawn. `allowAssign`
-   * pre-mints a new id up front (Claude/Roo); perTurn agents (Codex) pass false
+   * pre-mints a new id up front (Claude); perTurn agents (Codex) pass false
    * because the agent assigns its own session id, reported back via its stream.
    */
   private resolveSession(allowAssign: boolean): { resumeId: string | null; assignId: string | null } {
     const session = readSession(this.dir);
     // Continue the live session on respawn; honour an explicit resume request;
     // otherwise start fresh. The resume id is per-agent (a Claude session can't
-    // be resumed by Roo/Codex and vice-versa).
+    // be resumed by Codex and vice-versa).
     let resumeId: string | null = null;
     let assignId: string | null = null;
     if (this.everSpawned && this.currentSessionId) resumeId = this.currentSessionId;
@@ -482,7 +482,7 @@ export class AgentSession {
     this.child = child;
     this.everSpawned = true;
     this.stdoutBuf = '';
-    // A new child must be (re)opened: Roo sends `start` on the first turn.
+    // A new child must be (re)opened: reset the opening-turn flag.
     this.sentStart = false;
 
     child.stdout.setEncoding('utf8');

@@ -38,11 +38,8 @@ export interface DaemonInstallEnv {
   /** Bake DASHTERM_AGENT_ALLOW_ROOT=1 so the agent may run as root (Claude
    *  blocks bypassed-permissions as root otherwise). Opt-in; off by default. */
   agentAllowRoot?: boolean;
-  /** Bake DASHTERM_ROO_ENABLED=1 so the Roo Code agent is offered to clients
-   *  (the gateway only surfaces Roo when this is on). Off by default. */
-  rooEnabled?: boolean;
-  /** Bake DASHTERM_CODEX_ENABLED=1 so the Codex agent is offered to clients.
-   *  Off by default. */
+  /** Bake DASHTERM_CODEX_ENABLED=1 so the Codex agent is offered to clients
+   *  (the gateway only surfaces Codex when this is on). Off by default. */
   codexEnabled?: boolean;
 }
 
@@ -61,9 +58,6 @@ export function installMacos(
   }
   if (env.agentAllowRoot) {
     extra.push(`<key>DASHTERM_AGENT_ALLOW_ROOT</key>\n      <string>1</string>`);
-  }
-  if (env.rooEnabled) {
-    extra.push(`<key>DASHTERM_ROO_ENABLED</key>\n      <string>1</string>`);
   }
   if (env.codexEnabled) {
     extra.push(`<key>DASHTERM_CODEX_ENABLED</key>\n      <string>1</string>`);

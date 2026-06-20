@@ -20,9 +20,9 @@ export interface SessionMeta {
   // Legacy single-session id, written before multi-agent support. Treated as
   // Claude's resumable session for back-compat.
   lastSessionId?: string;
-  // Resumable session/task id per agent (e.g. { claude: {...}, roo: {...} }).
+  // Resumable session/task id per agent (e.g. { claude: {...}, codex: {...} }).
   // Each agent maintains an independent session: a Claude session id can't be
-  // resumed by Roo and vice-versa.
+  // resumed by Codex and vice-versa.
   agentSessions?: Record<string, { sessionId?: string; lastActivityAt?: number }>;
   createdAt?: number;
   lastActivityAt?: number;
