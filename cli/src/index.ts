@@ -7,6 +7,7 @@ import { updateCommand } from './commands/update';
 import { providerCommand } from './commands/provider';
 import { appCommand } from './commands/app';
 import { varsCommand, secretsCommand, hostsCommand } from './commands/inspect';
+import { qrCommand } from './commands/qr';
 import { backupCommand, restoreCommand } from './commands/backup';
 import {
   addUserCommand,
@@ -27,6 +28,7 @@ function help(): number {
   info('  doctor [--deep]                check Claude install/auth + daemon health');
   info('  start [--port N] [--bind ADDR] run the local gateway in the foreground');
   info('  start --dev                    run via tsx (no pre-build needed)');
+  info('  qr [--url URL]                 print a QR of the gateway URL to connect the phone app');
   info('  add-user <email> [pw]          create a user (use --admin / --force-reset)');
   info('  list-users                     list users in the local sqlite');
   info('  delete-user <email>            delete a user');
@@ -71,6 +73,8 @@ async function main(): Promise<number> {
       return help();
     case 'start':
       return startCommand(rest);
+    case 'qr':
+      return qrCommand(rest);
     case 'onboard':
     case 'setup':
       return onboardCommand(rest);

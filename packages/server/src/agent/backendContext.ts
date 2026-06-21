@@ -24,6 +24,7 @@ import { getVarsMap, listVars } from '../vars/registry';
 import { adapterFor, resolveProvider } from '../ai/registry';
 import { runAiLoop, type AiLoopOptions, type AiLoopResult } from '../ai/loop';
 import type { ChatRequest } from '../ai/types';
+import { sendPushToUser } from '../notifications/push';
 
 export interface ExecResult {
   ok: boolean;
@@ -60,6 +61,12 @@ export interface BackendCtx {
      *  provider's tool round-trip quirk so the app never re-implements it. */
     run(opts: Omit<AiLoopOptions, 'appId'> & { appId?: string }): Promise<AiLoopResult>;
   };
+  /**
+   * Push a notification to the app owner's registered devices (their phone).
+   * `data.appShareCode` is injected automatically so a tap can deep-link back
+   * to this app. Returns how many devices the push was accepted for.
+   */
+  notify(input: { title: string; body: string; data?: Record<string, unknown> }): Promise<{ sent: number }>;
   log(...args: unknown[]): void;
 }
 
@@ -135,6 +142,13 @@ export function buildBackendCtx(config: GatewayConfig, uid: string, shareCode: s
         return runAiLoop({ ...opts, appId: opts.appId ?? shareCode });
       },
     },
+
+    notify: (input) =>
+      sendPushToUser(uid, {
+        title: input.title,
+        body: input.body,
+        data: { appShareCode: shareCode, ...(input.data ?? {}) },
+      }),
 
     log: (...args) => console.log(`[backend ${uid.slice(0, 8)}]`, ...args),
   };

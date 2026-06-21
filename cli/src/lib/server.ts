@@ -88,6 +88,24 @@ function distRoots(): string[] {
   ];
 }
 
+/**
+ * Lightweight config-only loader for commands that just need the gateway's
+ * resolved config + reachable URL (e.g. `dashterm qr`), without opening the DB
+ * or loading the full backend surface.
+ */
+export function loadGatewayConfig(): { config: { bind: string; port: number; publicUrl: string | null; [k: string]: unknown }; reachableUrl: string } {
+  for (const r of distRoots()) {
+    const configMod = tryRequire(path.join(r, 'config.js'));
+    if (configMod?.loadConfig && configMod?.reachableUrl) {
+      const config = configMod.loadConfig();
+      return { config, reachableUrl: configMod.reachableUrl(config) };
+    }
+  }
+  throw new Error(
+    'Server build not found. Run `npm install` at the repo root (or `npm run build` in packages/server/).',
+  );
+}
+
 export function loadServerApi(): ServerApi {
   let root: string | null = null;
   let configMod: any = null;

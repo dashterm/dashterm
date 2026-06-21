@@ -25,6 +25,8 @@ import { registerAgentRoutes } from './routes/agent';
 import { registerHostsRoutes } from './routes/hosts';
 import { registerAppBackendRoutes } from './routes/appBackends';
 import { registerUpdateRoutes } from './routes/update';
+import { registerConnectRoutes } from './routes/connect';
+import { registerDevicesRoutes } from './routes/devices';
 import { reloadAllFromDb } from './agent/backendRegistry';
 import { broadcastAll } from './realtime';
 import { startUpdateChecker } from './infra/update';
@@ -84,6 +86,8 @@ export async function createServer(
   await registerHostsRoutes(app, config);
   await registerAppBackendRoutes(app, config);
   await registerUpdateRoutes(app, config);
+  await registerConnectRoutes(app, config);
+  await registerDevicesRoutes(app, config);
 
   // Rehydrate every agent-authored backend that survived a restart.
   const reloaded = reloadAllFromDb();

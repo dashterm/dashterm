@@ -10,7 +10,7 @@
  */
 
 import fs from 'fs';
-import { homedir } from 'os';
+import { homedir, networkInterfaces } from 'os';
 import path from 'path';
 
 export interface GatewayConfig {
@@ -43,6 +43,11 @@ export interface GatewayConfig {
   codexBin: string;                    // `codex` binary to spawn
   agentPermissionMode: string;         // --permission-mode value
   agentRoot: string;                   // root dir for per-user workspaces
+  // The URL a phone/browser uses to reach this gateway from elsewhere, e.g. a
+  // Tailscale serve/funnel `https://*.ts.net` address. Surfaced in the QR shown
+  // by `dashterm qr` and the /connect page. null = fall back to the bind host.
+  // We deliberately do NOT auto-discover a public address — the operator sets it.
+  publicUrl: string | null;
 }
 
 // Look for a built web bundle in the conventional spot next to this package.
@@ -109,5 +114,37 @@ export function loadConfig(overrides: Partial<GatewayConfig> = {}): GatewayConfi
       process.env.DASHTERM_AGENT_PERMISSION_MODE ??
       'bypassPermissions',
     agentRoot: overrides.agentRoot ?? path.join(dataDir, 'agent-workspaces'),
+    publicUrl:
+      overrides.publicUrl ??
+      (process.env.DASHTERM_PUBLIC_URL
+        ? process.env.DASHTERM_PUBLIC_URL.replace(/\/+$/, '')
+        : null),
   };
+}
+
+/** First non-internal IPv4 address, used as the LAN fallback when bound to 0.0.0.0. */
+function firstLanIPv4(): string | null {
+  const ifaces = networkInterfaces();
+  for (const name of Object.keys(ifaces)) {
+    for (const ni of ifaces[name] ?? []) {
+      if (ni.family === 'IPv4' && !ni.internal) return ni.address;
+    }
+  }
+  return null;
+}
+
+/**
+ * The URL a phone/browser should use to reach this gateway. Prefers the
+ * operator-set `publicUrl` (DASHTERM_PUBLIC_URL — e.g. a Tailscale serve/funnel
+ * `*.ts.net` address reachable from anywhere); otherwise falls back to the bind
+ * host, substituting a LAN IP when bound to 0.0.0.0. No auto-discovery of a
+ * public address — a localhost/LAN result is honestly local-only.
+ */
+export function reachableUrl(config: GatewayConfig): string {
+  if (config.publicUrl) return config.publicUrl.replace(/\/+$/, '');
+  const host =
+    config.bind === '0.0.0.0' || config.bind === '::'
+      ? firstLanIPv4() ?? 'localhost'
+      : config.bind;
+  return `http://${host}:${config.port}`;
 }
