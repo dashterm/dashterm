@@ -3,8 +3,12 @@
  * unit at $XDG_CONFIG_HOME/systemd/user/dashterm-gateway.service,
  * runs `systemctl --user daemon-reload && enable --now`.
  *
- * Headless boxes need `loginctl enable-linger $USER` to keep the unit
- * alive across logouts; surfaced in the error message if enable fails.
+ * Install also runs `loginctl enable-linger $USER` so the systemd user
+ * manager — and therefore this --user unit — keeps running after the
+ * installing login session ends and comes back up at boot. Without it a
+ * `systemctl --user` service is killed the moment you log out: the classic
+ * "gateway dies / I lose connectivity as soon as I close my SSH session" on
+ * headless boxes. Enabling linger is best-effort (see `enableLinger`).
  */
 
 import fs from 'node:fs';
@@ -14,6 +18,7 @@ import { spawnSync } from 'node:child_process';
 import type { DaemonInstallEnv } from './macos';
 import { gatewayErrLogPath, gatewayLogPath, dashtermHome } from './paths';
 import { LINUX_SERVICE_TEMPLATE, renderTemplate } from './templates';
+import { success, warn } from '../lib/log';
 
 export const LINUX_UNIT_NAME = 'dashterm-gateway.service';
 
@@ -81,7 +86,60 @@ export function installLinux(
       );
     }
   }
+
+  // The unit is now installed + running in this session — make it survive
+  // logout. Done last so a systemctl failure above short-circuits first.
+  enableLinger();
   return unit;
+}
+
+/**
+ * Turn on systemd user-lingering for the current user so the gateway keeps
+ * running after the installing session ends and starts at boot. `loginctl
+ * enable-linger` is idempotent (re-enabling an already-lingering user is a
+ * no-op), so we can call it on every (re)install unconditionally.
+ *
+ * Best-effort: the unit is already up for this session by the time we get
+ * here, so if linger can't be set — e.g. polkit denies it for a non-root SSH
+ * session, or `loginctl` is missing — we warn with the one command to run by
+ * hand rather than failing the whole install. (As root it just works, no
+ * sudo/polkit involved, which covers most headless boxes.)
+ */
+function enableLinger(): void {
+  const user = os.userInfo().username;
+  const res = spawnSync('loginctl', ['enable-linger', user], {
+    stdio: ['ignore', 'pipe', 'pipe'],
+  });
+  if (res.status === 0) {
+    success(`Lingering enabled for ${user} — the gateway survives logout and starts at boot.`);
+    return;
+  }
+  const detail =
+    (res.stderr && res.stderr.toString().trim()) ||
+    (res.error && res.error.message) ||
+    `exit ${res.status}`;
+  warn(
+    `Couldn't enable user lingering automatically (${detail}).\n` +
+      `  The gateway is running now but will STOP when you log out. To keep it up, run:\n` +
+      `    sudo loginctl enable-linger ${user}`,
+  );
+}
+
+/**
+ * Whether systemd user-lingering is on for the current user. `true`/`false`
+ * when we can tell, `null` when we can't (e.g. `loginctl` is missing — not a
+ * systemd box). A non-zero exit with no spawn error means logind doesn't know
+ * the user, which only happens when linger is off and there's no live session
+ * — so we report that as `false`, the actionable case `dashterm doctor` flags.
+ */
+export function lingerEnabledLinux(): boolean | null {
+  const user = os.userInfo().username;
+  const r = spawnSync('loginctl', ['show-user', user, '--property=Linger'], {
+    encoding: 'utf8',
+  });
+  if (r.error) return null;
+  if (r.status !== 0) return false;
+  return /Linger=yes/.test(r.stdout || '');
 }
 
 export function uninstallLinux(): boolean {

@@ -10,6 +10,7 @@
 import { homedir } from 'node:os';
 import path from 'node:path';
 import { daemonStatus } from '../daemon';
+import { lingerEnabledLinux } from '../daemon/linux';
 import { detectClaude, readClaudeExpiry } from '../lib/claude-auth';
 import { detectCodex, summariseCodex } from '../lib/codex-auth';
 import { c, info, success, warn } from '../lib/log';
@@ -89,6 +90,15 @@ export async function doctorCommand(args: string[]): Promise<number> {
     if (d.active === true) success(`  active     yes (pid ${d.pid ?? '?'})`);
     else if (d.active === false) warn('  active     no');
     else info('  active     unknown');
+    // systemd-user units are killed on logout unless lingering is on — the
+    // usual cause of "the gateway dies when I close my SSH session".
+    if (process.platform === 'linux') {
+      const linger = lingerEnabledLinux();
+      if (linger === true) success('  linger     enabled (survives logout)');
+      else if (linger === false)
+        warn('  linger     OFF — gateway stops on logout; run `sudo loginctl enable-linger $USER`');
+      // null → couldn't tell (no loginctl); stay quiet rather than cry wolf.
+    }
   }
   info('');
 
