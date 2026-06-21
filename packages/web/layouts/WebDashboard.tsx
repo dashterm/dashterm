@@ -36,6 +36,7 @@ import { storage } from "../../core/storage";
 import { useAuth } from "../../core/hooks/useAuth";
 import { styles } from "./WebDashboard/styles";
 import { useGridDragDrop } from "./WebDashboard/useGridDragDrop";
+import MobileDashboard from "./MobileDashboard";
 
 interface WebDashboardProps {
   state: AppState;
@@ -286,6 +287,10 @@ export default function WebDashboard({
   const cellHeight =
     (gridHeight - (activeSpace.gridRows - 1) * GAP) / activeSpace.gridRows;
 
+  // Narrow viewport (phone / WebView) → swap the drag-and-drop grid for the
+  // single-app swipe pager. Responsive so a resized desktop window follows too.
+  const isMobile = dimensions.width < 760;
+
   // Use the extracted drag/drop hook
   const {
     dragState,
@@ -505,6 +510,27 @@ export default function WebDashboard({
           release tag (no-op in dev / non-git installs). */}
       <UpdateBanner />
 
+      {isMobile ? (
+        <MobileDashboard
+          displayVersion={displayVersion}
+          isConnected={isConnected}
+          normalSpaces={normalSpaces}
+          activeSpace={activeSpace as Space}
+          activeSpaceId={activeSpaceId}
+          isSystemActive={isSystemActive}
+          customApps={state.customApps}
+          appInstances={state.appInstances}
+          switchSpace={switchSpace}
+          onCreateSpace={handleCreateSpace}
+          onOpenPalette={() => overlay.openOverlay("palette")}
+          onOpenSettings={systemSpace ? () => switchSpace(systemSpace.id) : undefined}
+          removeAppFromSpace={removeAppFromSpace}
+          updateAppInstance={updateAppInstance}
+          renderAppContent={renderAppContent}
+          getAppTitle={getAppTitle}
+        />
+      ) : (
+        <>
       {/* Header with Space Tabs */}
       <View style={[styles.header, { height: HEADER_HEIGHT }]}>
         <View style={styles.headerLeft}>
@@ -1216,6 +1242,8 @@ export default function WebDashboard({
           Switch Spaces • Drag to move/resize
         </Text>
       </View>
+        </>
+      )}
 
       {/* Command Palette (one of the three overlays) */}
       <CommandPalette
