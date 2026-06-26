@@ -37,8 +37,10 @@ import {
   uninstallWindows,
   windowsScriptPath,
 } from './windows';
+import { writeDaemonConfig } from './config';
 
 export type { DaemonInstallEnv } from './macos';
+export { readDaemonConfig, writeDaemonConfig } from './config';
 
 function resolveNodeBin(): string {
   // process.execPath = the Node binary running this very process. That's
@@ -64,6 +66,9 @@ function resolveDashTermBin(): string {
 export function installDaemon(env: DaemonInstallEnv): string {
   const nodeBin = resolveNodeBin();
   const dashtermBin = resolveDashTermBin();
+  // Record the operator's settings so a later reinstall/restart re-applies them
+  // (resolveEnv reads this back) instead of dropping flags not in the shell env.
+  writeDaemonConfig(env);
   if (process.platform === 'darwin') {
     return installMacos(nodeBin, dashtermBin, env);
   }

@@ -23,25 +23,39 @@ import {
   daemonStatus,
   installDaemon,
   isDaemonInstalled,
+  readDaemonConfig,
   uninstallDaemon,
 } from '../daemon';
 import { gatewayErrLogPath, gatewayLogPath } from '../daemon/paths';
 import { c, error, info, success, warn } from '../lib/log';
 
+/**
+ * The settings to bake into the (re)installed unit. Precedence, highest first:
+ *   1. An explicitly-set environment variable (operator overriding right now)
+ *   2. The value persisted by the last setup/install (~/.dashterm/daemon.json)
+ *   3. The built-in default
+ * Reading the persisted config is what makes the agent flags (and bind/port)
+ * survive a bare `dashterm daemon install`/`restart` instead of resetting to the
+ * gateway defaults whenever they aren't exported in the current shell.
+ */
 function resolveEnv(): DaemonInstallEnv {
-  const agentEnabled = ['1', 'true', 'yes'].includes(
-    (process.env.DASHTERM_AGENT_ENABLED ?? '').toLowerCase(),
-  );
-  const agentAllowRoot = ['1', 'true', 'yes'].includes(
-    (process.env.DASHTERM_AGENT_ALLOW_ROOT ?? '').toLowerCase(),
-  );
+  const saved = readDaemonConfig();
+  const envFlag = (name: string): boolean | undefined => {
+    const v = process.env[name];
+    if (v === undefined) return undefined;
+    return ['1', 'true', 'yes'].includes(v.toLowerCase());
+  };
+  const agentEnabled = envFlag('DASHTERM_AGENT_ENABLED') ?? saved.agentEnabled;
+  const agentAllowRoot = envFlag('DASHTERM_AGENT_ALLOW_ROOT') ?? saved.agentAllowRoot;
+  const codexEnabled = envFlag('DASHTERM_CODEX_ENABLED') ?? saved.codexEnabled;
   return {
-    port: process.env.DASHTERM_PORT ?? '8765',
-    bind: process.env.DASHTERM_BIND ?? '127.0.0.1',
+    port: process.env.DASHTERM_PORT ?? saved.port ?? '8765',
+    bind: process.env.DASHTERM_BIND ?? saved.bind ?? '127.0.0.1',
     dataDir:
-      process.env.DASHTERM_DATA_DIR ?? path.join(homedir(), '.dashterm'),
+      process.env.DASHTERM_DATA_DIR ?? saved.dataDir ?? path.join(homedir(), '.dashterm'),
     ...(agentEnabled ? { agentEnabled } : {}),
     ...(agentAllowRoot ? { agentAllowRoot } : {}),
+    ...(codexEnabled ? { codexEnabled } : {}),
   };
 }
 

@@ -20,3 +20,8 @@ export function gatewayLogPath(): string {
 export function gatewayErrLogPath(): string {
   return path.join(dashtermHome(), 'gateway.err.log');
 }
+
+/** Persisted daemon settings (bind/port + agent flags) — see daemon/config.ts. */
+export function daemonConfigPath(): string {
+  return path.join(dashtermHome(), 'daemon.json');
+}
