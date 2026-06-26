@@ -187,12 +187,9 @@ export default function MobileDashboard({
             flex: 1,
             display: "flex",
             flexDirection: "row",
-            width: "100%",
-            maxWidth: "100%",
             overflowX: "auto",
             overflowY: "hidden",
             scrollSnapType: "x mandatory",
-            overscrollBehaviorX: "contain",
             WebkitOverflowScrolling: "touch",
             minHeight: 0,
           }}
@@ -208,15 +205,11 @@ export default function MobileDashboard({
                 style={{
                   flex: "0 0 100%",
                   width: "100%",
-                  maxWidth: "100%",
                   height: "100%",
                   scrollSnapAlign: "start",
                   display: "flex",
                   flexDirection: "column",
                   minWidth: 0,
-                  // Clip an over-wide app to the page so it can't scroll
-                  // horizontally and fight the swipe-between-apps gesture.
-                  overflow: "hidden",
                 }}
               >
                 {/* Title bar (no drag/resize on mobile) */}
@@ -298,10 +291,6 @@ export default function MobileDashboard({
                     display: "flex",
                     flexDirection: "column",
                     minHeight: 0,
-                    minWidth: 0,
-                    width: "100%",
-                    maxWidth: "100%",
-                    boxSizing: "border-box",
                     padding: 8,
                   }}
                 >
