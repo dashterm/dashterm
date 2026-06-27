@@ -11,7 +11,8 @@
 import type { FastifyInstance } from 'fastify';
 import { getUserFromRequest } from './auth';
 import type { GatewayConfig } from '../config';
-import { AgentSession } from '../agent/session';
+import { AgentSession, resolveSessionKey } from '../agent/session';
+import { getSession } from '../agent/sessionRegistry';
 
 export async function registerAgentRoutes(app: FastifyInstance, config: GatewayConfig) {
   app.get('/api/agent/health', async () =>
@@ -36,14 +37,41 @@ export async function registerAgentRoutes(app: FastifyInstance, config: GatewayC
       return;
     }
 
-    const session = new AgentSession(
-      socket,
-      ctx.row.id,
-      ctx.row.display_name || ctx.row.email,
-      config,
-    );
-    socket.on('message', (raw: Buffer) => session.onMessage(raw));
-    socket.on('close', () => session.dispose());
-    socket.on('error', () => session.dispose());
+    const uid = ctx.row.id;
+    const name = ctx.row.display_name || ctx.row.email;
+    let session: AgentSession | null = null;
+
+    // On the auth handshake, re-attach to a still-running background session for
+    // the same (user, workspace, agent) — so reconnecting after a phone lock
+    // continues the live agent (whose turn kept running) instead of spawning a
+    // duplicate. Only the first message is checked: a reconnect leads with `auth`.
+    const tryAdopt = (raw: Buffer): boolean => {
+      let msg: { type?: string; workspace?: unknown; agent?: unknown; resume?: unknown };
+      try {
+        msg = JSON.parse(raw.toString());
+      } catch {
+        return false;
+      }
+      if (msg?.type !== 'auth') return false;
+      const existing = getSession(resolveSessionKey(config, uid, msg.workspace, msg.agent));
+      if (!existing || !existing.isAlive()) return false;
+      // An explicit fresh-start request must not adopt a live session.
+      if (msg.resume === false) {
+        existing.dispose();
+        return false;
+      }
+      session = existing;
+      existing.attach(socket);
+      existing.resendReady();
+      return true;
+    };
+
+    socket.on('message', (raw: Buffer) => {
+      if (!session && tryAdopt(raw)) return;
+      if (!session) session = new AgentSession(socket, uid, name, config);
+      session.onMessage(raw);
+    });
+    socket.on('close', () => session?.onDisconnect(socket));
+    socket.on('error', () => session?.onDisconnect(socket));
   });
 }

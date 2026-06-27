@@ -232,6 +232,16 @@ export default function AgenticCoder({ appState, onUpdate, relatedWorkspaceNames
   // *next* connect() to send `resume: false` so claude doesn't pull the old
   // session's context back in.
   const pendingFreshConnectRef = useRef<boolean>(false);
+  // Auto-reconnect after an UNEXPECTED drop (phone lock, network blip, gateway
+  // restart). We reconnect with backoff and re-attach (resume:true) to the live
+  // background session the gateway kept running. A user-initiated close marks the
+  // socket `__intentional` so it's left alone. connectRef lets onclose call the
+  // latest connect() without a render cycle.
+  const reconnectAttemptsRef = useRef(0);
+  const reconnectTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const connectRef = useRef<
+    ((targetWorkspace?: string, options?: { resume?: boolean }) => void) | null
+  >(null);
 
   // Derive sessions + viewing state for the current workspace. Sessions come
   // from persisted state (with one-time migration from the legacy log shape).
@@ -350,7 +360,13 @@ export default function AgenticCoder({ appState, onUpdate, relatedWorkspaceNames
       clearInterval(refreshTimerRef.current);
       refreshTimerRef.current = null;
     }
+    if (reconnectTimerRef.current) {
+      clearTimeout(reconnectTimerRef.current);
+      reconnectTimerRef.current = null;
+    }
     if (wsRef.current) {
+      // Mark this socket so its onclose doesn't trigger an auto-reconnect.
+      try { (wsRef.current as any).__intentional = true; } catch {}
       try { wsRef.current.close(1000, 'client'); } catch {}
       wsRef.current = null;
     }
@@ -358,6 +374,30 @@ export default function AgenticCoder({ appState, onUpdate, relatedWorkspaceNames
   }, []);
 
   useEffect(() => () => closeConnection(), [closeConnection]);
+
+  // When the app returns to the foreground (phone unlock / tab focus) or the
+  // network comes back, fire any PENDING auto-reconnect immediately — the backoff
+  // timer is frozen while the WebView is suspended, so without this a reconnect
+  // would otherwise wait out the full delay after you unlock.
+  useEffect(() => {
+    if (Platform.OS !== 'web' || typeof window === 'undefined') return;
+    const kick = () => {
+      if (typeof document !== 'undefined' && document.visibilityState === 'hidden') return;
+      if (!reconnectTimerRef.current) return; // only accelerate an already-pending reconnect
+      clearTimeout(reconnectTimerRef.current);
+      reconnectTimerRef.current = null;
+      reconnectAttemptsRef.current = 0;
+      connectRef.current?.(undefined, { resume: true });
+    };
+    document.addEventListener('visibilitychange', kick);
+    window.addEventListener('online', kick);
+    window.addEventListener('focus', kick);
+    return () => {
+      document.removeEventListener('visibilitychange', kick);
+      window.removeEventListener('online', kick);
+      window.removeEventListener('focus', kick);
+    };
+  }, []);
 
   // Paste handler: grab images off the clipboard while our input is focused so
   // the user can drop screenshots straight into a vibe-coding message.
@@ -419,6 +459,10 @@ export default function AgenticCoder({ appState, onUpdate, relatedWorkspaceNames
       return;
     }
     if (wsRef.current) closeConnection();
+    if (reconnectTimerRef.current) {
+      clearTimeout(reconnectTimerRef.current);
+      reconnectTimerRef.current = null;
+    }
 
     setError(null);
     setConn('connecting');
@@ -476,7 +520,23 @@ export default function AgenticCoder({ appState, onUpdate, relatedWorkspaceNames
         clearInterval(refreshTimerRef.current);
         refreshTimerRef.current = null;
       }
+      // Auto-reconnect on an UNEXPECTED drop (phone lock, network blip). Skip a
+      // user-initiated close (__intentional) and auth/disabled closes that would
+      // hot-loop: 4401 unauthorized, 4403 agent disabled by operator.
+      const intentional = !!(ws as any).__intentional;
+      if (!intentional && ev.code !== 4401 && ev.code !== 4403) scheduleReconnect();
     };
+
+    function scheduleReconnect() {
+      if (reconnectTimerRef.current) return;
+      const n = reconnectAttemptsRef.current++;
+      const delay = Math.min(15000, 1000 * 2 ** Math.min(n, 4)); // 1,2,4,8,15s
+      append(mkLine('system', `> connection lost — reconnecting in ${Math.round(delay / 1000)}s…`));
+      reconnectTimerRef.current = setTimeout(() => {
+        reconnectTimerRef.current = null;
+        connectRef.current?.(undefined, { resume: true });
+      }, delay);
+    }
 
     refreshTimerRef.current = setInterval(async () => {
       try {
@@ -491,6 +551,7 @@ export default function AgenticCoder({ appState, onUpdate, relatedWorkspaceNames
       switch (msg.type) {
         case 'ready':
           setConn('ready');
+          reconnectAttemptsRef.current = 0; // healthy connection — reset backoff
           setResumed(!!msg.resume);
           if (Array.isArray(msg.agents) && msg.agents.length > 0) {
             setAvailableAgents(msg.agents);
@@ -628,6 +689,7 @@ export default function AgenticCoder({ appState, onUpdate, relatedWorkspaceNames
       }
     }
   }, [append, closeConnection, onUpdate, relayUrl, workspace]);
+  connectRef.current = connect;
 
   // Auto-connect when the panel opens so it "just works" — connecting is cheap
   // (cookie auth + workspace setup; no claude process spawns until the first
