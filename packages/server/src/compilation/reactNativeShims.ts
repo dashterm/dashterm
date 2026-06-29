@@ -192,9 +192,34 @@ const RN_TEXT_BASE = {
 };
 
 // ============ BASIC COMPONENTS ============
-const View = ({ style, ...props }) => {
+// RN's onLayout has no DOM equivalent, so measure the host node with a
+// ResizeObserver and synthesize the { nativeEvent: { layout } } payload that RN
+// code (e.g. charts sizing to their container) expects. Only wired up when a
+// component actually passes onLayout, so the common refless View stays a plain
+// <div> with no observer overhead.
+const __useOnLayout = (onLayout) => {
+  const ref = useRef(null);
+  useLayoutEffect(() => {
+    const node = ref.current;
+    if (!node || typeof onLayout !== 'function') return;
+    const fire = () => {
+      const r = node.getBoundingClientRect();
+      onLayout({ nativeEvent: { layout: { x: node.offsetLeft, y: node.offsetTop, width: r.width, height: r.height } } });
+    };
+    fire();
+    if (typeof ResizeObserver === 'undefined') return;
+    const ro = new ResizeObserver(fire);
+    ro.observe(node);
+    return () => ro.disconnect();
+  }, [onLayout]);
+  return ref;
+};
+
+const View = ({ style, onLayout, ...props }) => {
+  const ref = __useOnLayout(onLayout);
   return React.createElement('div', {
     ...props,
+    ...(onLayout ? { ref } : {}),
     style: { ...RN_VIEW_BASE, ...flattenStyle(style) },
   });
 };
@@ -568,6 +593,52 @@ const RefreshControl = ({ refreshing, onRefresh, colors, tintColor, ...props }) 
     style: { textAlign: 'center', padding: 10, color: tintColor || colors?.[0] || '#00ffff' }
   }, 'Refreshing...');
 };
+
+// ============ REACT-NATIVE-SVG ============
+// react-native-svg primitives mapped to native SVG DOM elements. React renders
+// SVG tags directly, and RN-svg prop names (x, y, cx, d, fill, stroke,
+// strokeWidth, strokeDasharray, textAnchor, fontSize, gradientUnits, ...) line
+// up with the camelCase SVG attributes React already understands, so each shim
+// is a thin passthrough that just flattens an optional RN style object. The SVG
+// <text> element collides with RN's <Text>, so it is exposed as the global
+// SvgText and as Svg.Text -- never as a bare Text. Symbol lives only on the
+// namespace so it can't shadow the JS Symbol built-in inside the IIFE.
+const __svgEl = (tag) => ({ style, children, ...props }) =>
+  React.createElement(tag, style ? { ...props, style: flattenStyle(style) } : props, children);
+
+const Rect = __svgEl('rect');
+const Circle = __svgEl('circle');
+const Ellipse = __svgEl('ellipse');
+const Line = __svgEl('line');
+const Polyline = __svgEl('polyline');
+const Polygon = __svgEl('polygon');
+const Path = __svgEl('path');
+const G = __svgEl('g');
+const Defs = __svgEl('defs');
+const LinearGradient = __svgEl('linearGradient');
+const RadialGradient = __svgEl('radialGradient');
+const Stop = __svgEl('stop');
+const ClipPath = __svgEl('clipPath');
+const Mask = __svgEl('mask');
+const Pattern = __svgEl('pattern');
+const Marker = __svgEl('marker');
+const Use = __svgEl('use');
+const TSpan = __svgEl('tspan');
+const TextPath = __svgEl('textPath');
+const ForeignObject = __svgEl('foreignObject');
+const SvgText = __svgEl('text');
+
+const Svg = ({ style, children, ...props }) =>
+  React.createElement('svg', style ? { ...props, style: flattenStyle(style) } : props, children);
+
+// react-native-svg's default export also exposes every primitive as a property,
+// so "import Svg from 'react-native-svg'" with <Svg.Path/> / <Svg.Text/> works no
+// matter how a named import was aliased before import-stripping removed it.
+Object.assign(Svg, {
+  Rect, Circle, Ellipse, Line, Polyline, Polygon, Path, G, Defs,
+  LinearGradient, RadialGradient, Stop, ClipPath, Mask, Pattern, Marker,
+  Use, TSpan, TextPath, ForeignObject, Text: SvgText, Symbol: __svgEl('symbol')
+});
 
 // Add CSS animation for spinner
 if (typeof document !== 'undefined' && !document.getElementById('rn-shim-styles')) {
