@@ -195,12 +195,11 @@ export default function AgenticCoder({ appState, onUpdate, relatedWorkspaceNames
   const [waitingForReply, setWaitingForReply] = useState(false);
   const [resumed, setResumed] = useState(false);
   const [workspaces, setWorkspaces] = useState<WorkspaceSummary[]>([]);
-  const [showPicker, setShowPicker] = useState(!relayUrl);
-  const [showSessionsPicker, setShowSessionsPicker] = useState(false);
+  const [showPicker, setShowPicker] = useState(false);
   const [showAgentPicker, setShowAgentPicker] = useState(false);
+  const [showHistory, setShowHistory] = useState(false);
   const [availableAgents, setAvailableAgents] = useState<AgentInfo[]>(FALLBACK_AGENTS);
   const [newWorkspaceName, setNewWorkspaceName] = useState('');
-  const [relayUrlDraft, setRelayUrlDraft] = useState<string>(state.relayUrl || '');
   const [attachedImages, setAttachedImages] = useState<AttachedImage[]>([]);
   const inputFocusedRef = useRef(false);
   const [hosts, setHosts] = useState<HostSummary[]>([]);
@@ -453,9 +452,8 @@ export default function AgenticCoder({ appState, onUpdate, relatedWorkspaceNames
 
   const connect = useCallback(async (targetWorkspace?: string, options?: { resume?: boolean }) => {
     if (!relayUrl) {
-      setError('Set a relay URL first — tap "ws: …" to open the picker.');
+      setError('No relay configured — open settings (⚙) to set the DashTerm URL.');
       setConn('error');
-      setShowPicker(true);
       return;
     }
     if (wsRef.current) closeConnection();
@@ -473,7 +471,9 @@ export default function AgenticCoder({ appState, onUpdate, relatedWorkspaceNames
     const wantResume = options?.resume ?? !pendingFreshConnectRef.current;
     pendingFreshConnectRef.current = false;
     const ws_name = targetWorkspace || workspace;
-    append(mkLine('system', `> connecting to ${relayUrl} (workspace: ${ws_name}${wantResume ? '' : ', fresh session'})`));
+    // Transport lifecycle (connecting / open / ready) is reflected by the status
+    // dot + sub-line, NOT written into the conversation log — the log is for the
+    // conversation only, so a fresh chat shows a clean placeholder.
 
     const url = normalizeWsUrl(relayUrl);
     // The native gateway authenticates the WebSocket by session cookie, so a
@@ -492,7 +492,6 @@ export default function AgenticCoder({ appState, onUpdate, relatedWorkspaceNames
     wsRef.current = ws;
 
     ws.onopen = () => {
-      append(mkLine('system', '> websocket open, authenticating...'));
       setConn('authing');
       ws.send(JSON.stringify({
         type: 'auth',
@@ -513,7 +512,12 @@ export default function AgenticCoder({ appState, onUpdate, relatedWorkspaceNames
     ws.onerror = () => append(mkLine('error', '! websocket error'));
 
     ws.onclose = (ev) => {
-      append(mkLine('system', `> websocket closed (${ev.code}${ev.reason ? ' ' + ev.reason : ''})`));
+      const intentional = !!(ws as any).__intentional;
+      // Only surface terminal problems in the log. Routine/intentional closes are
+      // silent (the status dot already shows the state); unexpected drops get a
+      // single "reconnecting…" line from scheduleReconnect below.
+      if (ev.code === 4401) append(mkLine('error', '! session expired — please sign in again'));
+      else if (ev.code === 4403) append(mkLine('error', '! this agent is disabled by the operator'));
       setConn('closed');
       setWaitingForReply(false);
       if (refreshTimerRef.current) {
@@ -523,7 +527,6 @@ export default function AgenticCoder({ appState, onUpdate, relatedWorkspaceNames
       // Auto-reconnect on an UNEXPECTED drop (phone lock, network blip). Skip a
       // user-initiated close (__intentional) and auth/disabled closes that would
       // hot-loop: 4401 unauthorized, 4403 agent disabled by operator.
-      const intentional = !!(ws as any).__intentional;
       if (!intentional && ev.code !== 4401 && ev.code !== 4403) scheduleReconnect();
     };
 
@@ -564,12 +567,8 @@ export default function AgenticCoder({ appState, onUpdate, relatedWorkspaceNames
             // Server fell back to a different agent (e.g. requested one is off).
             onUpdate({ agent: msg.agent });
           }
-          append(mkLine(
-            'system',
-            `> ready  agent=${msg.agent || activeAgentRef.current}  workspace=${msg.workspace}  ${msg.resume
-              ? `resuming session ${shortenSessionId(msg.resumeSessionId)}`
-              : 'fresh session'}`,
-          ));
+          // No log line — READY shows on the status sub-line; the ⟲ badge in the
+          // breadcrumb indicates a resumed conversation.
           ws.send(JSON.stringify({ type: 'list_workspaces' }));
           ws.send(JSON.stringify({ type: 'list_hosts' }));
           break;
@@ -649,8 +648,7 @@ export default function AgenticCoder({ appState, onUpdate, relatedWorkspaceNames
         return;
       }
       if (event.type === 'system' && event.subtype === 'init') {
-        append(mkLine('system', `> ${agentLabelNow()} session ${shortenSessionId(event.session_id)}`));
-        return;
+        return; // conversation init — no log line; READY shows on the status sub-line
       }
       if (event.type === 'assistant' && event.message?.content) {
         // The full message has arrived — the streamed preview's job is done.
@@ -803,35 +801,33 @@ export default function AgenticCoder({ appState, onUpdate, relatedWorkspaceNames
   // a clean context — that's the whole point of the button.
   const startNewSession = useCallback(() => {
     if (waitingForReply) {
-      setError('Wait for the current turn to finish before starting a new session.');
+      setError('Wait for the current reply to finish before starting a new chat.');
       return;
     }
     setError(null);
     const now = Date.now();
     const map = sessionsByWorkspaceRef.current;
     const existing = map[workspace] || [];
-    // Flush the in-memory liveLog into the old live session before we shift it
-    // into the archive — the debounced effect may not have fired yet.
+    // Flush the in-memory liveLog so a real conversation isn't lost to the debounce.
     const trimmedCurrent = liveLogRef.current.slice(-LOG_PERSIST_CAP);
-    const archivedHead: Session[] = existing.length > 0
-      ? [{ ...existing[0], log: trimmedCurrent.length > 0 ? trimmedCurrent : existing[0].log, lastActivityAt: now }, ...existing.slice(1)]
-      : [];
-    // Only seed the new session if the previous one has actual content;
-    // otherwise just reuse the empty session that's already there.
-    const previousHadContent =
-      (existing[0]?.log?.length || 0) > 0 || trimmedCurrent.length > 0;
-    if (!previousHadContent && existing.length > 0) {
-      // No-op: the current session is already empty, no need to make another.
-      setShowSessionsPicker(false);
-      return;
+    // Archive the current chat into history only if the user actually talked to
+    // the agent. A chat with nothing but connection chatter (or empty) isn't worth
+    // keeping — we just reset it in place. Either way the click always produces a
+    // visibly fresh, empty chat (no silent no-op).
+    const hasUserTurn = (log?: LogLine[]) =>
+      Array.isArray(log) && log.some((l) => l.kind === 'user');
+    const worthArchiving = hasUserTurn(trimmedCurrent) || hasUserTurn(existing[0]?.log);
+    const newLive: Session = { id: makeSessionId(), createdAt: now, lastActivityAt: now, log: [] };
+    let nextList: Session[];
+    if (worthArchiving) {
+      const archivedHead: Session[] = existing.length > 0
+        ? [{ ...existing[0], log: trimmedCurrent.length > 0 ? trimmedCurrent : existing[0].log, lastActivityAt: now }, ...existing.slice(1)]
+        : [{ id: makeSessionId(), createdAt: now, lastActivityAt: now, log: trimmedCurrent }];
+      nextList = [newLive, ...archivedHead].slice(0, SESSIONS_PER_WORKSPACE_CAP);
+    } else {
+      // Drop the chatter-only/empty current chat; keep any real past chats.
+      nextList = [newLive, ...existing.slice(1)].slice(0, SESSIONS_PER_WORKSPACE_CAP);
     }
-    const newLive: Session = {
-      id: makeSessionId(),
-      createdAt: now,
-      lastActivityAt: now,
-      log: [],
-    };
-    const nextList = [newLive, ...archivedHead].slice(0, SESSIONS_PER_WORKSPACE_CAP);
     onUpdate({
       sessionsByWorkspace: { ...map, [workspace]: nextList },
       viewingSessionByWorkspace: {
@@ -840,21 +836,20 @@ export default function AgenticCoder({ appState, onUpdate, relatedWorkspaceNames
       },
     });
     setLiveLog([]);
+    setShowHistory(false);
     hydratedForRef.current = workspace; // mark as already hydrated for the new live
-    setShowSessionsPicker(false);
     if (wsRef.current?.readyState === 1) {
       // Hot-swap: drop the relay's resumed session by reconnecting fresh.
       closeConnection();
       connect(workspace, { resume: false });
     } else {
       // Offline: remember that the next CONNECT must be fresh, so we don't
-      // accidentally resume the just-archived session's context.
+      // accidentally resume the just-archived conversation's context.
       pendingFreshConnectRef.current = true;
     }
   }, [closeConnection, connect, onUpdate, waitingForReply, workspace]);
 
   const viewSession = useCallback((sessionId: string) => {
-    setShowSessionsPicker(false);
     if (sessionId === viewingSessionId) return;
     onUpdate({
       viewingSessionByWorkspace: {
@@ -964,6 +959,15 @@ export default function AgenticCoder({ appState, onUpdate, relatedWorkspaceNames
     catch { return false; }
   }, []);
 
+  // Open one dropdown and close the others. Workspace + agent hang off the
+  // breadcrumb; hosts off the secondary link; history off the chat bar.
+  const togglePicker = (which: 'ws' | 'agent' | 'hosts' | 'history') => {
+    setShowPicker((v) => (which === 'ws' ? !v : false));
+    setShowAgentPicker((v) => (which === 'agent' ? !v : false));
+    setShowHostsPicker((v) => (which === 'hosts' ? !v : false));
+    setShowHistory((v) => (which === 'history' ? !v : false));
+  };
+
   const statusColor = useMemo(() => {
     if (conn === 'ready') return '#00ff00';
     if (conn === 'authing' || conn === 'connecting') return '#ffff00';
@@ -973,58 +977,100 @@ export default function AgenticCoder({ appState, onUpdate, relatedWorkspaceNames
 
   return (
     <View style={styles.container}>
-      <View style={styles.statusBar}>
-        <Text style={[styles.statusDot, { color: statusColor }]}>● </Text>
-        <Text style={styles.statusText} numberOfLines={1} ellipsizeMode="tail">
-          {conn.toUpperCase()}
-          {relayUrl ? `  ${shortenUrl(relayUrl)}` : '  (no relay url)'}
-        </Text>
-        <Pressable
-          onPress={() => { setShowAgentPicker((v) => !v); setShowPicker(false); setShowHostsPicker(false); setShowSessionsPicker(false); }}
-          style={styles.agentButton}
-        >
-          <Text style={styles.agentButtonText} numberOfLines={1} ellipsizeMode="tail">
-            {`ag:${agent}${showAgentPicker ? '▴' : '▾'}`}
-          </Text>
-        </Pressable>
-        <Pressable
-          onPress={() => { setShowPicker((v) => !v); setShowHostsPicker(false); setShowSessionsPicker(false); setShowAgentPicker(false); }}
-          style={styles.workspaceButton}
-        >
-          <Text
-            style={styles.workspaceButtonText}
-            numberOfLines={1}
-            ellipsizeMode="tail"
-          >
-            {`ws:${workspace}`}{resumed ? '⟲' : ''}{showPicker ? '▴' : '▾'}
-          </Text>
-        </Pressable>
-        <Pressable
-          onPress={() => { setShowSessionsPicker((v) => !v); setShowPicker(false); setShowHostsPicker(false); setShowAgentPicker(false); }}
-          style={styles.sessionButton}
-        >
-          <Text style={styles.sessionButtonText} numberOfLines={1} ellipsizeMode="tail">
-            {`sess:${Math.max(sessions.length, 1)}${!isViewingLive ? '*' : ''}${showSessionsPicker ? '▴' : '▾'}`}
-          </Text>
-        </Pressable>
-        <Pressable
-          onPress={() => { setShowHostsPicker((v) => !v); setShowPicker(false); setShowSessionsPicker(false); setShowAgentPicker(false); }}
-          style={styles.workspaceButton}
-        >
-          <Text style={styles.workspaceButtonText} numberOfLines={1} ellipsizeMode="tail">
-            {`hosts:${hosts.length}${showHostsPicker ? '▴' : '▾'}`}
-          </Text>
-        </Pressable>
-        {conn === 'idle' || conn === 'closed' || conn === 'error' ? (
-          <Pressable onPress={() => connect()} style={styles.statusButton}>
-            <Text style={styles.statusButtonText}>[CONNECT]</Text>
+      {/* NAV — connection · workspace ▸ agent breadcrumb · hosts · connect */}
+      <View style={styles.navBar}>
+        <Text style={[styles.statusDot, { color: statusColor }]}>●</Text>
+
+        <View style={styles.breadcrumb}>
+          <Pressable onPress={() => togglePicker('ws')} style={styles.crumbButton} hitSlop={6}>
+            <Text style={styles.crumbText} numberOfLines={1} ellipsizeMode="tail">{workspace}</Text>
+            <Text style={styles.crumbCaret}>{showPicker ? '▴' : '▾'}</Text>
           </Pressable>
-        ) : (
-          <Pressable onPress={closeConnection} style={styles.statusButton}>
-            <Text style={styles.statusButtonText}>[DISCONNECT]</Text>
+          {availableAgents.length > 1 && (
+            <>
+              <Text style={styles.crumbSep}>▸</Text>
+              <Pressable onPress={() => togglePicker('agent')} style={styles.crumbButton} hitSlop={6}>
+                <Text style={styles.crumbAgent} numberOfLines={1} ellipsizeMode="tail">{agentLabel}</Text>
+                <Text style={styles.crumbCaret}>{showAgentPicker ? '▴' : '▾'}</Text>
+              </Pressable>
+            </>
+          )}
+          {resumed ? <Text style={styles.resumedBadge}>⟲ resumed</Text> : null}
+        </View>
+
+        <View style={styles.navRight}>
+          <Pressable onPress={() => togglePicker('hosts')} style={styles.hostsLink} hitSlop={6}>
+            <Text style={styles.hostsLinkText} numberOfLines={1}>
+              {`hosts${hosts.length ? ' ' + hosts.length : ''}${showHostsPicker ? ' ▴' : ''}`}
+            </Text>
+          </Pressable>
+          {conn === 'idle' || conn === 'closed' || conn === 'error' ? (
+            <Pressable onPress={() => connect()} style={styles.connectButton}>
+              <Text style={styles.connectButtonText}>CONNECT</Text>
+            </Pressable>
+          ) : (
+            <Pressable onPress={closeConnection} style={styles.connectButton}>
+              <Text style={styles.connectButtonText}>DISCONNECT</Text>
+            </Pressable>
+          )}
+        </View>
+      </View>
+
+      <Text style={styles.statusSubline} numberOfLines={1} ellipsizeMode="tail">
+        {`${conn.toUpperCase()}${relayUrl ? '  ·  ' + shortenUrl(relayUrl) : '  ·  no relay configured'}`}
+      </Text>
+
+      {/* CHATS — a chat is one conversation with the agent. New chat = fresh memory. */}
+      <View style={styles.chatBar}>
+        <Pressable
+          onPress={startNewSession}
+          style={[styles.newChatButton, waitingForReply && styles.disabled]}
+          disabled={waitingForReply}
+        >
+          <Text style={styles.newChatText}>＋ New chat</Text>
+        </Pressable>
+        <View style={styles.chatBarSpacer} />
+        {sessions.length > 1 && (
+          <Pressable onPress={() => togglePicker('history')} style={styles.historyButton} hitSlop={6}>
+            <Text style={styles.historyButtonText}>
+              {`⏱ ${sessions.length - 1} past chat${sessions.length - 1 === 1 ? '' : 's'} ${showHistory ? '▴' : '▾'}`}
+            </Text>
           </Pressable>
         )}
       </View>
+
+      {showHistory && (
+        <View style={styles.picker}>
+          <Text style={styles.label}>+-- CHAT HISTORY ({workspace}) --+</Text>
+          <Text style={styles.help}>
+            {`Each chat is a separate conversation with its own memory. Starting a new\nchat keeps things fast for quick tweaks — your built apps are never lost,\nonly the agent's memory of the conversation resets. Past chats are read-only.`}
+          </Text>
+          {sessions.map((s, idx) => {
+            const isCurrent = idx === 0;
+            const isViewing = s.id === viewingSessionId;
+            return (
+              <View key={s.id} style={styles.pickerRow}>
+                <Pressable
+                  onPress={() => { viewSession(s.id); setShowHistory(false); }}
+                  style={styles.pickerNameButton}
+                >
+                  <Text style={[styles.pickerName, isViewing && styles.pickerNameActive]}>
+                    {`${isViewing ? '> ' : '  '}${isCurrent ? 'Current chat' : `Past chat ${idx}`}  —  ${sessionPreview(s)}`}
+                  </Text>
+                  <Text style={styles.pickerMeta}>
+                    {`${s.log.length} line${s.log.length === 1 ? '' : 's'} · ${formatRelative(s.lastActivityAt)}${isCurrent ? ' · active' : ''}`}
+                  </Text>
+                </Pressable>
+                {!isCurrent && (
+                  <Pressable onPress={() => deleteSession(s.id)} style={styles.pickerDelete}>
+                    <Text style={styles.pickerDeleteText}>×</Text>
+                  </Pressable>
+                )}
+              </View>
+            );
+          })}
+        </View>
+      )}
 
       {showAgentPicker && (
         <View style={styles.picker}>
@@ -1060,39 +1106,10 @@ export default function AgenticCoder({ appState, onUpdate, relatedWorkspaceNames
 
       {showPicker && (
         <View style={styles.picker}>
-          <Text style={styles.label}>+-- DASHTERM URL --+</Text>
-          <Text style={styles.help}>
-            {`Examples:\n  wss://your-host.example.com/dashterm\n  ws://192.168.1.10:18790`}
-          </Text>
-          <View style={styles.newRow}>
-            <Text style={styles.prompt}>+</Text>
-            <TextInput
-              value={relayUrlDraft}
-              onChangeText={setRelayUrlDraft}
-              placeholder="wss://your-host/dashterm"
-              placeholderTextColor="#005555"
-              autoCapitalize="none"
-              autoCorrect={false}
-              keyboardType="url"
-              style={styles.newInput}
-            />
-            <Pressable
-              onPress={() => {
-                const next = relayUrlDraft.trim();
-                onUpdate({ relayUrl: next });
-                setError(null);
-              }}
-              style={[
-                styles.statusButton,
-                relayUrlDraft.trim() === (state.relayUrl || '').trim() && styles.disabled,
-              ]}
-              disabled={relayUrlDraft.trim() === (state.relayUrl || '').trim()}
-            >
-              <Text style={styles.statusButtonText}>[ SAVE ]</Text>
-            </Pressable>
-          </View>
-
           <Text style={styles.label}>+-- WORKSPACES --+</Text>
+          <Text style={styles.help}>
+            {`A workspace is a project folder the agent works in — it can hold many\napps. You start in "default"; make another only to keep an unrelated\nproject's files apart. Relay URL lives in settings (⚙).`}
+          </Text>
           {filterAvailable && (
             <Pressable
               onPress={() => setShowAllWorkspaces((v) => !v)}
@@ -1167,52 +1184,6 @@ export default function AgenticCoder({ appState, onUpdate, relatedWorkspaceNames
               <Text style={styles.statusButtonText}>[ CREATE ]</Text>
             </Pressable>
           </View>
-        </View>
-      )}
-
-      {showSessionsPicker && (
-        <View style={styles.picker}>
-          <Text style={styles.label}>+-- SESSIONS ({workspace}) --+</Text>
-          <Text style={styles.help}>
-            {`Each session is its own claude context. Start a new one to keep\nthe context window small for quick tweaks — older sessions stay\nreadable here. Up to ${SESSIONS_PER_WORKSPACE_CAP} sessions per workspace.`}
-          </Text>
-          <Pressable
-            onPress={startNewSession}
-            style={[styles.statusButton, { alignSelf: 'flex-start', marginTop: 4 }, waitingForReply && styles.disabled]}
-            disabled={waitingForReply}
-          >
-            <Text style={styles.statusButtonText}>[ + NEW SESSION ]</Text>
-          </Pressable>
-          {sessions.length === 0 ? (
-            <Text style={styles.hint}>
-              {`No sessions yet — your first message will create one.`}
-            </Text>
-          ) : (
-            sessions.map((s, idx) => {
-              const isLive = idx === 0;
-              const isViewing = s.id === viewingSessionId;
-              return (
-                <View key={s.id} style={styles.pickerRow}>
-                  <Pressable
-                    onPress={() => viewSession(s.id)}
-                    style={styles.pickerNameButton}
-                  >
-                    <Text style={[styles.pickerName, isViewing && styles.pickerNameActive]}>
-                      {`${isViewing ? '> ' : '  '}${isLive ? 'live' : `archive ${idx}`}  ${sessionPreview(s)}`}
-                    </Text>
-                    <Text style={styles.pickerMeta}>
-                      {`${s.log.length} line${s.log.length === 1 ? '' : 's'} · ${formatRelative(s.lastActivityAt)}${isLive ? ' · current context' : ''}`}
-                    </Text>
-                  </Pressable>
-                  {!isLive && (
-                    <Pressable onPress={() => deleteSession(s.id)} style={styles.pickerDelete}>
-                      <Text style={styles.pickerDeleteText}>×</Text>
-                    </Pressable>
-                  )}
-                </View>
-              );
-            })
-          )}
         </View>
       )}
 
@@ -1322,13 +1293,13 @@ export default function AgenticCoder({ appState, onUpdate, relatedWorkspaceNames
       {!isViewingLive && viewedSession && (
         <View style={styles.archiveBanner}>
           <Text style={styles.archiveBannerText} numberOfLines={2}>
-            {`viewing archive — ${sessionPreview(viewedSession)}`}
+            {`viewing a past chat (read-only) — ${sessionPreview(viewedSession)}`}
           </Text>
           <Pressable
             onPress={() => liveSessionId && viewSession(liveSessionId)}
             style={styles.statusButton}
           >
-            <Text style={styles.statusButtonText}>[ back to live ]</Text>
+            <Text style={styles.statusButtonText}>[ back to current ]</Text>
           </Pressable>
         </View>
       )}
@@ -1336,11 +1307,11 @@ export default function AgenticCoder({ appState, onUpdate, relatedWorkspaceNames
       <ScrollView ref={scrollRef} style={styles.log} contentContainerStyle={styles.logContent}>
         {displayLog.length === 0 ? (
           <Text style={styles.placeholder}>
-            {`+-- AGENT LOG --+
-> Connect to the relay, then type an app idea.
-> e.g. "make me a habit tracker for water intake.
->       4-8 glasses target, no resets across days."
-> Generated files auto-push to your dashboard.`}
+            {`+-- NEW CHAT --+
+> Describe an app and the agent builds it for you.
+> e.g. "make me a habit tracker for water intake —
+>       4-8 glasses a day, no resets across days."
+> Apps you build appear on your dashboard automatically.`}
           </Text>
         ) : (
           displayLog.map((line) => {
@@ -1405,7 +1376,7 @@ export default function AgenticCoder({ appState, onUpdate, relatedWorkspaceNames
             value={input}
             onChangeText={setInput}
             placeholder={!isViewingLive
-              ? 'viewing archive — click [back to live] above to send'
+              ? 'viewing a past chat — click [back to current] above to type'
               : conn === 'ready'
                 ? 'describe an app, follow up, or paste a screenshot — enter to send, shift+enter for newline'
                 : 'connect first'}
@@ -1484,10 +1455,6 @@ function shortenUrl(url: string): string {
   return url.replace(/^wss?:\/\//i, '').replace(/^https?:\/\//i, '');
 }
 
-function shortenSessionId(id?: string | null): string {
-  return id || '';
-}
-
 function isValidWorkspaceName(name: string): boolean {
   return /^[a-z0-9][a-z0-9_-]{0,31}$/.test(name);
 }
@@ -1564,63 +1531,82 @@ const styles = StyleSheet.create({
   container: {
     flex: 1,
     backgroundColor: '#0a0a0a',
-    padding: 8,
+    padding: 12,
   },
-  statusBar: {
+  statusDot: { fontFamily: 'Courier New', fontSize: 13, flexShrink: 0, marginRight: 8 },
+  navBar: {
     flexDirection: 'row',
     alignItems: 'center',
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    borderWidth: 1,
+    borderColor: '#004444',
+    backgroundColor: '#001515',
+    marginBottom: 6,
+  },
+  breadcrumb: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    minWidth: 0,
+    flexWrap: 'wrap',
+  },
+  crumbButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: 3,
+    paddingHorizontal: 4,
+    flexShrink: 1,
+  },
+  crumbText: { fontFamily: 'Courier New', fontSize: 14, color: '#00ff00', flexShrink: 1 },
+  crumbAgent: { fontFamily: 'Courier New', fontSize: 14, color: '#00ffff', flexShrink: 1 },
+  crumbCaret: { fontFamily: 'Courier New', fontSize: 11, color: '#557777', marginLeft: 3 },
+  crumbSep: { fontFamily: 'Courier New', fontSize: 13, color: '#557777', marginHorizontal: 4 },
+  resumedBadge: { fontFamily: 'Courier New', fontSize: 11, color: '#998800', marginLeft: 10 },
+  navRight: { flexDirection: 'row', alignItems: 'center', flexShrink: 0, marginLeft: 8 },
+  hostsLink: { paddingHorizontal: 8, paddingVertical: 4, marginRight: 6 },
+  hostsLinkText: { fontFamily: 'Courier New', fontSize: 12, color: '#557777' },
+  connectButton: {
     borderWidth: 1,
     borderColor: '#00ffff',
-    paddingHorizontal: 8,
+    paddingHorizontal: 12,
     paddingVertical: 6,
-    marginBottom: 4,
   },
-  statusDot: { fontFamily: 'Courier New', fontSize: 12, flexShrink: 0 },
-  statusText: {
+  connectButtonText: { fontFamily: 'Courier New', fontSize: 11, color: '#00ffff', letterSpacing: 0.5 },
+  statusSubline: {
     fontFamily: 'Courier New',
-    fontSize: 11,
-    color: '#cccccc',
-    flex: 1,
-    minWidth: 0,
-    marginRight: 6,
+    fontSize: 10,
+    color: '#557777',
+    marginBottom: 10,
+    marginLeft: 2,
   },
   statusButton: {
     borderWidth: 1,
     borderColor: '#00ffff',
-    paddingHorizontal: 6,
-    paddingVertical: 2,
-    marginLeft: 4,
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    marginLeft: 6,
     flexShrink: 0,
   },
   statusButtonText: { fontFamily: 'Courier New', fontSize: 11, color: '#00ffff' },
-  workspaceButton: {
-    borderWidth: 1,
-    borderColor: '#00ff00',
-    paddingHorizontal: 6,
-    paddingVertical: 2,
-    flexShrink: 1,
-    maxWidth: 140,
+  chatBar: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 10,
   },
-  workspaceButtonText: { fontFamily: 'Courier New', fontSize: 11, color: '#00ff00' },
-  sessionButton: {
-    borderWidth: 1,
-    borderColor: '#ffff00',
-    paddingHorizontal: 6,
-    paddingVertical: 2,
-    marginLeft: 4,
-    flexShrink: 0,
-  },
-  sessionButtonText: { fontFamily: 'Courier New', fontSize: 11, color: '#ffff00' },
-  agentButton: {
+  chatBarSpacer: { flex: 1 },
+  newChatButton: {
     borderWidth: 1,
     borderColor: '#00ffff',
-    paddingHorizontal: 6,
-    paddingVertical: 2,
-    marginRight: 4,
-    flexShrink: 1,
-    maxWidth: 120,
+    paddingHorizontal: 14,
+    paddingVertical: 8,
   },
-  agentButtonText: { fontFamily: 'Courier New', fontSize: 11, color: '#00ffff' },
+  newChatText: { fontFamily: 'Courier New', fontSize: 12, color: '#00ffff' },
+  historyButton: {
+    paddingHorizontal: 10,
+    paddingVertical: 8,
+  },
+  historyButtonText: { fontFamily: 'Courier New', fontSize: 12, color: '#557777' },
   archiveBanner: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -1641,13 +1627,13 @@ const styles = StyleSheet.create({
   picker: {
     borderWidth: 1,
     borderColor: '#00ff00',
-    padding: 8,
-    marginBottom: 4,
+    padding: 14,
+    marginBottom: 8,
   },
   pickerRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    marginTop: 4,
+    marginTop: 8,
   },
   pickerNameButton: { flex: 1 },
   pickerName: {
@@ -1732,16 +1718,16 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: '#003333',
     backgroundColor: '#000000',
-    padding: 8,
-    marginBottom: 8,
+    padding: 14,
+    marginBottom: 10,
   },
   logContent: { paddingBottom: 12 },
-  placeholder: { fontFamily: 'Courier New', fontSize: 11, color: '#005555' },
+  placeholder: { fontFamily: 'Courier New', fontSize: 11, color: '#005555', lineHeight: 18 },
   logLine: {
     fontFamily: 'Courier New',
-    fontSize: 11,
-    marginBottom: 2,
-    lineHeight: 16,
+    fontSize: 12,
+    marginBottom: 3,
+    lineHeight: 18,
   },
   log_system:    { color: '#005588' },
   log_user:      { color: '#ffff00' },
@@ -1832,8 +1818,8 @@ const styles = StyleSheet.create({
   inputRow: {
     flexDirection: 'row',
     alignItems: 'flex-start',
-    paddingHorizontal: 8,
-    paddingVertical: 6,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
   },
   prompt: {
     fontFamily: 'Courier New',
