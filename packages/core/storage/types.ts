@@ -58,6 +58,32 @@ export interface UserData {
   appState: AppState;
 }
 
+// A portable, self-contained app bundle (a `.dashapp.json` file). Source-only:
+// it never carries compiled blobs or install-local fields (owner, visibility,
+// version, timestamps). The gateway recompiles from source on import.
+export interface AppExport {
+  format: 'dashterm-app/1';
+  exportedAt: number;
+  sourceId: string;
+  name: string;
+  description: string;
+  category: string | null;
+  code: string;
+  backendCode: string | null;
+  hasBackend: boolean;
+  functions: unknown;
+  queryableData: unknown;
+}
+
+export interface ImportAppResult {
+  shareCode: string;
+  name: string;
+  hasBackend: boolean;
+  // true when the import overwrote an app that already existed at this share
+  // code (re-import / pull newer) rather than creating a new one.
+  updated: boolean;
+}
+
 export interface UserSummary {
   id: string;
   email: string;
@@ -99,6 +125,13 @@ export interface StorageProvider {
   getApp(shareCode: string): Promise<CustomApp | null>;
   setApp(shareCode: string, app: CustomApp): Promise<void>;
   deleteApp(shareCode: string): Promise<void>;
+  // Portable export/import. exportApp returns a source-only bundle; importApp
+  // recompiles it on the gateway, mints a fresh share code owned by the caller,
+  // and starts the app private. `trusted` is the user's explicit acknowledgement
+  // that the bundle's code (frontend + any backend) will run — the gateway
+  // rejects the import without it.
+  exportApp(shareCode: string): Promise<AppExport>;
+  importApp(manifest: AppExport, trusted: boolean): Promise<ImportAppResult>;
   subscribeApps(cb: (apps: CustomApp[]) => void): () => void;
   subscribeApp(shareCode: string, cb: (app: CustomApp | null) => void): () => void;
   // Force an immediate re-fetch of the shared apps list and dispatch it to all

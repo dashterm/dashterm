@@ -15,8 +15,10 @@
  */
 
 import type {
+  AppExport,
   AuthProvider,
   AuthUser,
+  ImportAppResult,
   SignInResult,
   StorageProvider,
   UpdateStatus,
@@ -274,6 +276,18 @@ export class DashTermApiStorageProvider implements StorageProvider {
 
   async deleteApp(shareCode: string): Promise<void> {
     await http<{ ok: boolean }>('DELETE', `/api/apps/${encodeURIComponent(shareCode)}`);
+  }
+
+  async exportApp(shareCode: string): Promise<AppExport> {
+    const r = await http<{ manifest: AppExport }>(
+      'GET',
+      `/api/apps/${encodeURIComponent(shareCode)}/export`,
+    );
+    return r.manifest;
+  }
+
+  async importApp(manifest: AppExport, trusted: boolean): Promise<ImportAppResult> {
+    return http<ImportAppResult>('POST', '/api/apps/import', { manifest, trusted });
   }
 
   private async fetchAndDispatchApps(): Promise<void> {

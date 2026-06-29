@@ -21,6 +21,7 @@ interface CommandPaletteProps {
   // Custom apps
   customApps?: Record<string, CustomApp>;
   onDeleteCustomApp?: (appId: string) => void;
+  onImportApp?: () => void;
   // Space management props
   spaces?: Space[];
   activeSpaceId?: string;
@@ -46,6 +47,7 @@ export default function CommandPalette({
   activeApps,
   customApps = {},
   onDeleteCustomApp,
+  onImportApp,
   spaces = [],
   activeSpaceId,
   onSwitchSpace,
@@ -157,6 +159,20 @@ export default function CommandPalette({
         });
       }
     });
+
+    // Import an app bundle (.dashapp.json) into the library.
+    if (onImportApp) {
+      cmds.push({
+        id: 'import-app',
+        title: 'Import App from File…',
+        description: 'Load a .dashapp.json bundle (you must trust its code)',
+        category: 'Custom Apps',
+        action: () => {
+          onImportApp();
+        },
+        keywords: ['import', 'load', 'bundle', 'dashapp', 'install', 'add', 'file', 'json'],
+      });
+    }
 
     // Custom apps - allow adding/removing them from current space
     Object.entries(customApps).forEach(([customAppId, customApp]) => {
@@ -327,7 +343,7 @@ export default function CommandPalette({
     });
 
     return cmds;
-  }, [activeApps, customApps, spaces, activeSpaceId, onAddApp, onRemoveApp, onDeleteCustomApp, onClose, onSwitchSpace, onCreateSpace, onDeleteSpace, onRenameSpace, onUpdateSpaceGrid, onOpenCoder, onOpenScheduler, onOpenEvents, onOpenSettings]);
+  }, [activeApps, customApps, spaces, activeSpaceId, onAddApp, onRemoveApp, onDeleteCustomApp, onImportApp, onClose, onSwitchSpace, onCreateSpace, onDeleteSpace, onRenameSpace, onUpdateSpaceGrid, onOpenCoder, onOpenScheduler, onOpenEvents, onOpenSettings]);
 
   // Filter commands based on search
   const filteredCommands = useMemo(() => {

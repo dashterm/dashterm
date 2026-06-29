@@ -22,7 +22,7 @@ import {
   AppSettings,
 } from "../../core/types";
 import { getAllApps, getApp } from "../../core/registry";
-import { CommandPalette } from "../../core/components/common";
+import { CommandPalette, ImportAppModal } from "../../core/components/common";
 import AppInfoButton from "../../core/components/common/AppInfoButton";
 import AppSettingsButton from "../../core/components/common/AppSettingsButton";
 import AppRenderer from "../../core/components/common/AppRenderer";
@@ -89,6 +89,21 @@ const FOOTER_HEIGHT = 40;
 const GAP = 8;
 const PADDING = 16;
 
+// Trigger a browser download of a JSON object as a file. Web-only; the
+// dashboard layout only renders on web.
+function downloadJson(filename: string, obj: unknown) {
+  if (typeof document === "undefined") return;
+  const blob = new Blob([JSON.stringify(obj, null, 2)], { type: "application/json" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filename.replace(/[^a-z0-9._-]+/gi, "_");
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+
 export default function WebDashboard({
   state,
   userProfile,
@@ -123,6 +138,7 @@ export default function WebDashboard({
   const [newSpaceName, setNewSpaceName] = useState("");
   const [spaceSettingsVisible, setSpaceSettingsVisible] = useState(false);
   const [settingsMenuVisible, setSettingsMenuVisible] = useState(false);
+  const [importVisible, setImportVisible] = useState(false);
   const [selectedDate, setSelectedDate] = useState(() => {
     const today = new Date();
     return today.toISOString().split('T')[0];
@@ -921,6 +937,19 @@ export default function WebDashboard({
                         });
                       };
 
+                      const handleExport = (e: React.MouseEvent) => {
+                        e.stopPropagation();
+                        storage
+                          .exportApp(customApp.id)
+                          .then((manifest) => {
+                            downloadJson(`${customApp.name || customApp.id}.dashapp.json`, manifest);
+                          })
+                          .catch((err) => {
+                            console.error('Export failed:', err);
+                            window.alert(`Export failed: ${(err as Error).message}`);
+                          });
+                      };
+
                       return (
                         <>
                           <span
@@ -950,7 +979,7 @@ export default function WebDashboard({
                               fontWeight: 'bold',
                               padding: '1px 6px',
                               borderRadius: 2,
-                              marginRight: 6,
+                              marginRight: 4,
                               letterSpacing: 1,
                               cursor: 'pointer',
                               userSelect: 'none',
@@ -958,6 +987,25 @@ export default function WebDashboard({
                             title={`Share code: ${customApp.id}\nClick to copy • Share this code with others to let them use your app`}
                           >
                             {customApp.id}
+                          </span>
+                          <span
+                            onClick={handleExport}
+                            style={{
+                              backgroundColor: 'rgba(0, 0, 0, 0.6)',
+                              border: '1px solid #ff00ff',
+                              color: '#ff00ff',
+                              fontFamily: 'Courier New',
+                              fontSize: 9,
+                              fontWeight: 'bold',
+                              padding: '1px 6px',
+                              borderRadius: 2,
+                              marginRight: 6,
+                              cursor: 'pointer',
+                              userSelect: 'none',
+                            }}
+                            title="Export this app as a .dashapp.json file you can share or back up"
+                          >
+                            ⬇
                           </span>
                         </>
                       );
@@ -1257,6 +1305,7 @@ export default function WebDashboard({
         ]}
         customApps={state.customApps}
         onDeleteCustomApp={deleteCustomApp}
+        onImportApp={() => setImportVisible(true)}
         spaces={spaces}
         activeSpaceId={activeSpaceId}
         onSwitchSpace={switchSpace}
@@ -1268,6 +1317,19 @@ export default function WebDashboard({
         onOpenScheduler={() => overlay.openOverlay('scheduler')}
         onOpenEvents={() => overlay.openOverlay('events')}
         onOpenSettings={systemSpace ? () => switchSpace(systemSpace.id) : undefined}
+      />
+
+      {/* Import an app bundle (.dashapp.json). Gated behind an explicit
+          "Trust this app" acknowledgement — imported code runs with the user's
+          access (frontend in their browser, any backend on their gateway). */}
+      <ImportAppModal
+        visible={importVisible}
+        onClose={() => setImportVisible(false)}
+        onImported={() => {
+          // The gateway broadcasts apps:changed on import, but pull immediately
+          // so the new app shows up in the palette's library without waiting.
+          void storage.refreshApps();
+        }}
       />
 
       {/* Global overlays — AgenticCoder + Scheduler + Events Subsystem. Composed
